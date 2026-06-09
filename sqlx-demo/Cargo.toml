@@ -5,6 +5,27 @@ edition = "2024"
 
 [dependencies]
 
+axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.9.0", features = ["sqlite", "runtime-tokio", "macros"] }
-clap = { version = "4.6.1", features = ["derive"] }
+sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "macros", "time", "uuid"] }
+
+# Important secondary crates
+argon2 = "0.6.0-rc.8" # FIXME: update to `0.6.0` when released
+rand = "0.10.1"
+regex = "1.6.0"
+serde = "1.0.219"
+serde_with = { version = "3.18.0", features = ["time_0_3"] }
+time = "0.3.47"
+uuid = { version = "1.12.1", features = ["serde"] }
+validator = { version = "0.20.0", features = ["derive"] }
+
+# Auxilliary crates
+anyhow = "1.0.58"
+dotenvy = "0.15.7"
+thiserror = "2.0.18"
+tracing = "0.1.37"
+
+[dev-dependencies]
+http-body-util = "0.1"
+serde_json = "1.0.142"
+tower = "0.5.2"
