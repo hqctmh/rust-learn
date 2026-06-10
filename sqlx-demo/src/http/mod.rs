@@ -10,7 +10,9 @@ use sqlx::PgPool;
 pub type Result<T, E = Error> = ::std::result::Result<T, E>;
 
 pub fn app(db: PgPool) -> Router {
-    Router::new().merge(user::router()).with_state(db)
+    Router::new().merge(user::router())
+        .merge(post::router())
+        .with_state(db)
 }
 
 pub async fn serve(db: PgPool) -> anyhow::Result<()> {

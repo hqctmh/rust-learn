@@ -2,9 +2,9 @@ mod comment;
 
 use crate::http::Result;
 use crate::http::user::UserAuth;
-use axum::{Json, Router};
 use axum::extract::State;
 use axum::routing::get;
+use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -12,9 +12,10 @@ use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 use validator::Validate;
 
-pub fn router()->Router<PgPool>{
+pub fn router() -> Router<PgPool> {
     Router::new()
-        .route("/v1/post",get(get_posts).post(create_post))
+        .route("/v1/post", get(get_posts).post(create_post))
+        .merge(comment::router())
 }
 
 #[derive(Deserialize, Validate)]
@@ -40,7 +41,7 @@ async fn create_post(db: State<PgPool>, Json(req): Json<CreatePostRequest>) -> R
     req.validate()?;
     let user_id = req.auth.verify(&*db).await?;
 
-    let post=sqlx::query_as!(
+    let post = sqlx::query_as!(
         Post,
         r#"
             with inserted_post as (
@@ -54,14 +55,15 @@ async fn create_post(db: State<PgPool>, Json(req): Json<CreatePostRequest>) -> R
         "#,
         user_id,
         req.content
-    ).fetch_one(&*db)
+    )
+    .fetch_one(&*db)
     .await?;
 
     Ok(Json(post))
 }
 
-async fn get_posts(db:State<PgPool>) -> Result<Json<Vec<Post>>>{
-    let posts=sqlx::query_as!(
+async fn get_posts(db: State<PgPool>) -> Result<Json<Vec<Post>>> {
+    let posts = sqlx::query_as!(
         Post,
         r#"
             select post_id,username,content,created_at
@@ -69,7 +71,9 @@ async fn get_posts(db:State<PgPool>) -> Result<Json<Vec<Post>>>{
             inner join "user" using(user_id)
             order by created_at desc
         "#
-    ).fetch_all(&*db).await?;
+    )
+    .fetch_all(&*db)
+    .await?;
 
     Ok(Json(posts))
 }
