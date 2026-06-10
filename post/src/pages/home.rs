@@ -9,26 +9,36 @@ pub fn HomePage() -> impl IntoView {
         PostSummary::sample(),
         PostSummary {
             title: "如何在 Leptos 中优雅地处理表单验证".to_string(),
-            summary: "结合 server functions、validator 和服务端校验，整理一套发布帖子的输入边界。".to_string(),
+            summary: "结合 server functions、validator 和服务端校验，整理一套发布帖子的输入边界。"
+                .to_string(),
             author_name: "hello-rust".to_string(),
             category_name: Some("教程".to_string()),
             view_count: 856,
             comment_count: 18,
             like_count: 96,
             favorite_count: 34,
-            tags: vec!["leptos".to_string(), "form".to_string(), "validation".to_string()],
+            tags: vec![
+                "leptos".to_string(),
+                "form".to_string(),
+                "validation".to_string(),
+            ],
             ..PostSummary::sample()
         },
         PostSummary {
             title: "Leptos + Axum 构建全栈应用的项目结构分享".to_string(),
-            summary: "一个可复用的项目结构，包含前端组件、后端 API、共享类型、认证和数据库模块。".to_string(),
+            summary: "一个可复用的项目结构，包含前端组件、后端 API、共享类型、认证和数据库模块。"
+                .to_string(),
             author_name: "Skyline".to_string(),
             category_name: Some("实践".to_string()),
             view_count: 642,
             comment_count: 15,
             like_count: 78,
             favorite_count: 29,
-            tags: vec!["leptos".to_string(), "axum".to_string(), "fullstack".to_string()],
+            tags: vec![
+                "leptos".to_string(),
+                "axum".to_string(),
+                "fullstack".to_string(),
+            ],
             ..PostSummary::sample()
         },
     ];
@@ -128,7 +138,16 @@ fn SidebarCard(title: &'static str, items: Vec<(&'static str, &'static str)>) ->
 
 #[component]
 fn TagCloud() -> impl IntoView {
-    let tags = ["leptos", "rust", "axum", "web", "tailwindcss", "sqlx", "wasm", "server-actions"];
+    let tags = [
+        "leptos",
+        "rust",
+        "axum",
+        "web",
+        "tailwindcss",
+        "sqlx",
+        "wasm",
+        "server-actions",
+    ];
 
     view! {
         <section class="rounded-lg border border-base-300 bg-base-100 p-5">
@@ -158,7 +177,14 @@ fn AnnouncementList() -> impl IntoView {
 
 #[component]
 fn ActiveAuthors() -> impl IntoView {
-    let authors = ["tangzx", "hello-rust", "Skyline", "CodeMika", "张开发", "Rains"];
+    let authors = [
+        "tangzx",
+        "hello-rust",
+        "Skyline",
+        "CodeMika",
+        "张开发",
+        "Rains",
+    ];
 
     view! {
         <section class="rounded-lg border border-base-300 bg-base-100 p-5">

@@ -4,9 +4,9 @@ async fn main() -> anyhow::Result<()> {
     use axum::Router;
     use leptos::logging::log;
     use leptos::prelude::*;
-    use leptos_axum::{generate_route_list, LeptosRoutes};
+    use leptos_axum::{LeptosRoutes, generate_route_list};
     use post::api;
-    use post::app::{shell, App};
+    use post::app::{App, shell};
     use post::state::ForumStore;
 
     let conf = get_configuration(None)?;

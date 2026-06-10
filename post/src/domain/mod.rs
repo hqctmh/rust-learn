@@ -1,6 +1,10 @@
 pub mod auth;
 pub mod comments;
+pub mod events;
+pub mod files;
+pub mod moderation;
 pub mod notifications;
 pub mod posts;
 pub mod rbac;
 pub mod reactions;
+pub mod taxonomy;

@@ -2,8 +2,11 @@ pub mod app;
 pub mod components;
 pub mod domain;
 pub mod error;
+pub mod events;
 pub mod pages;
+pub mod search;
 pub mod state;
+pub mod storage;
 
 #[cfg(feature = "ssr")]
 pub mod api;

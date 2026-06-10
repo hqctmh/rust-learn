@@ -78,3 +78,27 @@ pub struct CreatePostRequest {
     pub tag_names: Vec<String>,
     pub publish: bool,
 }
+
+pub type UpdatePostRequest = CreatePostRequest;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub enum SearchSort {
+    Latest,
+    Hot,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SearchQuery {
+    pub keyword: Option<String>,
+    pub category_name: Option<String>,
+    pub tag: Option<String>,
+    pub sort: SearchSort,
+    pub page: usize,
+    pub page_size: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SearchResult {
+    pub total: usize,
+    pub items: Vec<PostSummary>,
+}

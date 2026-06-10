@@ -24,3 +24,29 @@ pub struct Notification {
     pub read_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub enum AnnouncementTarget {
+    AllUsers,
+    User(Uuid),
+    Role(String),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AnnouncementRequest {
+    pub title: String,
+    pub body: String,
+    pub target: AnnouncementTarget,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Announcement {
+    pub announcement_id: Uuid,
+    pub title: String,
+    pub body: String,
+    pub target: AnnouncementTarget,
+    pub pinned: bool,
+    pub published: bool,
+    pub created_by: Uuid,
+    pub created_at: OffsetDateTime,
+}

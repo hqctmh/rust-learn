@@ -8,13 +8,21 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = "1.0"
+argon2 = { version = "0.5", features = ["std"] }
+async-nats = { version = "0.43", optional = true }
+aws-config = { version = "1.5", optional = true }
+aws-sdk-s3 = { version = "1.66", optional = true }
 axum = { version = "0.8", features = ["macros", "ws"], optional = true }
+bytes = "1.11"
 console_error_panic_hook = { version = "0.1", optional = true }
+elasticsearch = { version = "8.19.0-alpha.1", optional = true }
+getrandom = { version = "0.2", features = ["js"] }
 leptos = { version = "0.8.0" }
 leptos_axum = { version = "0.8.0", optional = true }
 leptos_meta = { version = "0.8.0" }
 leptos_router = { version = "0.8.0" }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "macros", "time", "uuid"], optional = true }
 thiserror = "2.0"
 time = { version = "0.3", features = ["serde"] }
@@ -34,7 +42,11 @@ hydrate = [
 ]
 ssr = [
     "dep:axum",
+    "dep:async-nats",
+    "dep:aws-config",
+    "dep:aws-sdk-s3",
     "dep:tokio",
+    "dep:elasticsearch",
     "dep:leptos_axum",
     "dep:sqlx",
     "leptos/ssr",
