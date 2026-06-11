@@ -78,3 +78,23 @@ pub struct CreatePostRequest {
     pub tag_names: Vec<String>,
     pub publish: bool,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct UpdatePostRequest {
+    pub title: String,
+    pub markdown: String,
+    pub summary: String,
+    pub category_name: Option<String>,
+    pub tag_names: Vec<String>,
+    pub publish: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AutosaveDraftRequest {
+    pub post_id: Option<Uuid>,
+    pub title: String,
+    pub markdown: String,
+    pub summary: String,
+    pub category_name: Option<String>,
+    pub tag_names: Vec<String>,
+}

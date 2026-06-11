@@ -1675,6 +1675,7 @@ dependencies = [
  "anyhow",
  "axum",
  "console_error_panic_hook",
+ "dotenvy",
  "leptos",
  "leptos_axum",
  "leptos_meta",

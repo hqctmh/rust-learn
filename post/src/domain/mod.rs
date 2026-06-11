@@ -1,6 +1,16 @@
+pub mod admin;
+pub mod announcements;
 pub mod auth;
 pub mod comments;
+pub mod files;
+pub mod home;
+pub mod moderation;
 pub mod notifications;
 pub mod posts;
 pub mod rbac;
 pub mod reactions;
+pub mod reports;
+pub mod search;
+pub mod taxonomy;
+pub mod user_admin;
+pub mod users;

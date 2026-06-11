@@ -1,8 +1,13 @@
+#![recursion_limit = "256"]
+
 pub mod app;
 pub mod components;
 pub mod domain;
 pub mod error;
 pub mod pages;
+#[cfg(feature = "ssr")]
+pub mod repositories;
+pub mod services;
 pub mod state;
 
 #[cfg(feature = "ssr")]
