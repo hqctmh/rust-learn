@@ -767,7 +767,8 @@ label.input input {
   padding: 8px;
 }
 
-.editor-toolbar button {
+.editor-toolbar button,
+.editor-toolbar .editor-upload-button {
   border: 0;
   border-radius: 10px;
   background: var(--base-100);
@@ -775,6 +776,14 @@ label.input input {
   color: var(--base-content);
   font-size: 13px;
   font-weight: 800;
+}
+
+.editor-toolbar .editor-upload-button {
+  cursor: pointer;
+}
+
+.editor-upload-button input {
+  display: none;
 }
 
 .markdown-input {
@@ -786,6 +795,26 @@ label.input input {
 .editor-actions {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+.editor-session-row {
+  margin-bottom: 14px;
+}
+
+.editor-session-row label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.editor-session-row input {
+  font-weight: 500;
+}
+
+.editor-feedback {
+  margin-top: 16px;
 }
 
 .preview-panel h1,
@@ -803,6 +832,55 @@ label.input input {
 .auth-panel p {
   color: var(--muted);
   line-height: 1.55;
+}
+
+.auth-form-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-feedback {
+  display: grid;
+  gap: 6px;
+  overflow: hidden;
+  border: 1px solid var(--base-300);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.auth-feedback strong {
+  color: var(--base-content);
+  font-size: 14px;
+}
+
+.auth-feedback span {
+  color: var(--muted);
+}
+
+.auth-feedback code {
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  background: var(--base-200);
+  padding: 6px 8px;
+  color: var(--base-content);
+  font-size: 12px;
+}
+
+.auth-feedback a {
+  color: var(--primary);
+  font-weight: 800;
+}
+
+.auth-feedback-success {
+  border-color: rgba(49, 162, 76, 0.32);
+  background: rgba(49, 162, 76, 0.08);
+}
+
+.auth-feedback-error {
+  border-color: rgba(224, 65, 65, 0.32);
+  background: rgba(224, 65, 65, 0.08);
 }
 
 .code-preview,

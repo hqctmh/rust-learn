@@ -1898,6 +1898,7 @@ fn admin_stat(label: &str, value: usize, delta: &str) -> AdminStat {
 #[cfg(feature = "ssr")]
 fn dashboard_user_row(row: AdminUserRow) -> DashboardUserRow {
     DashboardUserRow {
+        user_id: row.user_id,
         username: row.username,
         nickname: row.nickname,
         roles: row.roles,
@@ -1913,6 +1914,7 @@ fn dashboard_user_row(row: AdminUserRow) -> DashboardUserRow {
 #[cfg(feature = "ssr")]
 fn dashboard_post_row(row: ModerationPostRow) -> AdminPostRow {
     AdminPostRow {
+        post_id: row.post_id,
         title: row.title,
         author: row.author_name,
         category: row.category_name.unwrap_or_else(|| "未分类".to_string()),
@@ -1933,6 +1935,7 @@ fn dashboard_post_row(row: ModerationPostRow) -> AdminPostRow {
 #[cfg(feature = "ssr")]
 fn dashboard_comment_row(row: ModerationCommentRow) -> AdminCommentRow {
     AdminCommentRow {
+        comment_id: row.comment_id,
         post_title: row.post_title,
         author: row.author_name,
         content: row.content,
@@ -1979,6 +1982,7 @@ fn dashboard_tag_row(row: TagItem) -> AdminTagRow {
 #[cfg(feature = "ssr")]
 fn dashboard_announcement_row(row: AnnouncementItem) -> AdminAnnouncementRow {
     AdminAnnouncementRow {
+        announcement_id: row.announcement_id,
         title: row.title,
         announcement_type: row.announcement_type,
         audience: announcement_audience_label(&row.audience),
@@ -1996,6 +2000,7 @@ fn dashboard_announcement_row(row: AnnouncementItem) -> AdminAnnouncementRow {
 #[cfg(feature = "ssr")]
 fn dashboard_report_row(row: ReportItem) -> AdminReportRow {
     AdminReportRow {
+        report_id: row.report_id,
         target: row
             .target_title
             .unwrap_or_else(|| row.target_id.hyphenated().to_string()),
@@ -2078,12 +2083,7 @@ pub struct RuntimeConfig {
     pub home_sidebar_cache_enabled: bool,
     pub home_sidebar_cache_ttl_seconds: usize,
     pub nats_url: String,
-    pub rustfs_endpoint: String,
     pub rustfs_bucket: String,
-    pub rustfs_region: String,
-    pub rustfs_access_key: String,
-    pub rustfs_secret_key: String,
-    pub rustfs_force_path_style: bool,
     pub elasticsearch_url: String,
     pub elasticsearch_search_index: String,
     pub search_backend: String,
@@ -2110,19 +2110,8 @@ impl RuntimeConfig {
                 .unwrap_or(60),
             nats_url: std::env::var("NATS_URL")
                 .unwrap_or_else(|_| "nats://localhost:4222".to_string()),
-            rustfs_endpoint: std::env::var("RUSTFS_ENDPOINT")
-                .unwrap_or_else(|_| "http://localhost:9000".to_string()),
             rustfs_bucket: std::env::var("RUSTFS_BUCKET")
                 .unwrap_or_else(|_| "post-assets".to_string()),
-            rustfs_region: std::env::var("RUSTFS_REGION")
-                .unwrap_or_else(|_| "us-east-1".to_string()),
-            rustfs_access_key: std::env::var("RUSTFS_ACCESS_KEY")
-                .unwrap_or_else(|_| "rustfsadmin".to_string()),
-            rustfs_secret_key: std::env::var("RUSTFS_SECRET_KEY")
-                .unwrap_or_else(|_| "rustfsadmin".to_string()),
-            rustfs_force_path_style: std::env::var("RUSTFS_FORCE_PATH_STYLE")
-                .map(|value| value == "true" || value == "1")
-                .unwrap_or(true),
             elasticsearch_url: std::env::var("ELASTICSEARCH_URL")
                 .unwrap_or_else(|_| "http://localhost:9200".to_string()),
             elasticsearch_search_index: std::env::var("ELASTICSEARCH_SEARCH_INDEX")

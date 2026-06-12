@@ -283,12 +283,570 @@ fn auth_service_normalizes_credentials_and_builds_sessions() {
 #[test]
 fn auth_routes_are_registered() {
     let primary = post::app::primary_routes();
+    assert!(primary.contains(&"/login"));
     assert!(primary.contains(&"/register"));
 
     let routes = post::app::api_route_inventory();
+    assert!(routes.contains(&"/api/login"));
     assert!(routes.contains(&"/api/register"));
     assert!(routes.contains(&"/api/logout"));
     assert!(routes.contains(&"/api/session/{session_id}"));
+}
+
+#[test]
+fn auth_pages_submit_through_leptos_server_actions() {
+    let login_page = std::fs::read_to_string("src/pages/login.rs").expect("read login page source");
+    let register_page =
+        std::fs::read_to_string("src/pages/register.rs").expect("read register page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for required in [
+        "#[server]",
+        "pub async fn login_user(",
+        ".login(&username, &password)",
+        "pub async fn register_user(",
+        ".register(crate::domain::auth::RegisterRequest",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "auth server function missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "use leptos::form::ActionForm",
+        "ServerAction::<LoginUser>::new()",
+        "<ActionForm action=login_action>",
+        "name=\"username\"",
+        "name=\"password\"",
+        "action.value()",
+    ] {
+        assert!(
+            login_page.contains(required),
+            "login page should submit through a server action fragment: {required}"
+        );
+    }
+
+    for required in [
+        "use leptos::form::ActionForm",
+        "ServerAction::<RegisterUser>::new()",
+        "<ActionForm action=register_action>",
+        "name=\"username\"",
+        "name=\"nickname\"",
+        "name=\"password\"",
+        "name=\"confirm_password\"",
+        "action.value()",
+    ] {
+        assert!(
+            register_page.contains(required),
+            "register page should submit through a server action fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn editor_page_submits_posts_with_session_backed_server_action() {
+    let editor_page =
+        std::fs::read_to_string("src/pages/editor.rs").expect("read editor page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+    let login_page = std::fs::read_to_string("src/pages/login.rs").expect("read login page source");
+    let register_page =
+        std::fs::read_to_string("src/pages/register.rs").expect("read register page source");
+
+    for required in [
+        "pub async fn submit_post(",
+        "Uuid::parse_str(&session_id)",
+        ".current_session(session_id)",
+        ".create_post(",
+        "session.user.user_id",
+        "CreatePostRequest",
+        "split(',')",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "post submit server function missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "use leptos::form::ActionForm",
+        "use_query_map",
+        "ServerAction::<SubmitPost>::new()",
+        "<ActionForm action=submit_action>",
+        "name=\"post_id\"",
+        "name=\"session_id\"",
+        "name=\"title\"",
+        "name=\"summary\"",
+        "name=\"category_name\"",
+        "name=\"tag_names\"",
+        "name=\"markdown\"",
+        "value=\"publish\"",
+        "submit_result.get()",
+    ] {
+        assert!(
+            editor_page.contains(required),
+            "editor page should submit through a session-backed server action fragment: {required}"
+        );
+    }
+
+    assert!(
+        login_page.contains("/posts/new?session_id={}")
+            && register_page.contains("/posts/new?session_id={}"),
+        "auth success links should carry the session_id into the editor route"
+    );
+}
+
+#[test]
+fn editor_page_autosaves_drafts_with_same_session_backed_action() {
+    let editor_page =
+        std::fs::read_to_string("src/pages/editor.rs").expect("read editor page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for required in [
+        "save_mode: String",
+        "save_mode == \"draft\"",
+        ".autosave_draft(",
+        "AutosaveDraftRequest",
+        "post_id,",
+        "category_name: (!category_name.trim().is_empty())",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "draft autosave server path missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "name=\"save_mode\"",
+        "value=\"draft\"",
+        "value=\"publish\"",
+        "草稿保存成功",
+        "发布成功",
+        "if post.status == PostStatus::Draft",
+    ] {
+        assert!(
+            editor_page.contains(required),
+            "editor page autosave UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn editor_page_previews_markdown_through_safe_server_action() {
+    let editor_page =
+        std::fs::read_to_string("src/pages/editor.rs").expect("read editor page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+    let service_source =
+        std::fs::read_to_string("src/services/posts.rs").expect("read post service source");
+
+    for required in [
+        "pub async fn preview_markdown(",
+        "PostAuthoringService::preview_markdown(&markdown)",
+        "Result<String, ServerFnError>",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "preview server function missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub fn preview_markdown(markdown: &str)",
+        "render_markdown_safe(markdown)",
+        "正文不能为空",
+    ] {
+        assert!(
+            service_source.contains(required),
+            "post authoring service should expose safe markdown preview fragment: {required}"
+        );
+    }
+
+    for required in [
+        "preview_markdown",
+        "SubmitPost",
+        "let markdown_value = RwSignal::new(String::new())",
+        "Action::new(|markdown: &String| preview_markdown(markdown.clone()))",
+        "event_target_value(&event)",
+        "preview_action.dispatch(markdown_value.get())",
+        "preview_result.get()",
+        "inner_html=html",
+        "预览失败",
+    ] {
+        assert!(
+            editor_page.contains(required),
+            "editor page should wire safe preview action fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn editor_page_uploads_image_and_inserts_markdown_link() {
+    let editor_page =
+        std::fs::read_to_string("src/pages/editor.rs").expect("read editor page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+    let cargo = std::fs::read_to_string("Cargo.toml").expect("read cargo manifest");
+    let style = std::fs::read_to_string("style/main.css").expect("read stylesheet");
+
+    for required in [
+        "pub async fn upload_editor_image(",
+        "FileBinaryUploadRequest",
+        "FileUsage::MarkdownImage",
+        ".upload_binary_file(",
+        "session.user.user_id",
+        "Result<FileAsset, ServerFnError>",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "editor image upload server function missing fragment: {required}"
+        );
+    }
+
+    for required in ["web-sys", "FileReader", "HtmlInputElement", "FileList"] {
+        assert!(
+            cargo.contains(required),
+            "hydrated editor image upload requires browser file API dependency fragment: {required}"
+        );
+    }
+
+    for required in [
+        "preview_markdown",
+        "upload_editor_image",
+        "SubmitPost",
+        "struct EditorImageUploadInput",
+        "Action::new(|input: &EditorImageUploadInput|",
+        "upload_editor_image(",
+        "queue_image_upload_from_event(",
+        "read_as_data_url(&file)",
+        "content_base64",
+        "asset.markdown_image",
+        "markdown_value.update(",
+        "prop:value=move || markdown_value.get()",
+        "type=\"file\"",
+        "accept=\"image/png,image/jpeg,image/webp\"",
+        "图片上传失败",
+    ] {
+        assert!(
+            editor_page.contains(required),
+            "editor page should upload images and insert markdown fragment: {required}"
+        );
+    }
+
+    for required in [
+        ".editor-toolbar .editor-upload-button",
+        ".editor-upload-button input",
+        "display: none",
+    ] {
+        assert!(
+            style.contains(required),
+            "editor upload control should match toolbar button styling fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn editor_page_updates_and_deletes_existing_posts_from_edit_route() {
+    let editor_page =
+        std::fs::read_to_string("src/pages/editor.rs").expect("read editor page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for required in [
+        "post_id: String",
+        "Uuid::parse_str(&post_id)",
+        ".update_post(",
+        "UpdatePostRequest",
+        "pub async fn delete_editor_post(",
+        ".delete_own_post(session.user.user_id, post_id)",
+        "PostStatus::Deleted",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "editor update/delete server path missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "use leptos_router::hooks::{use_params_map, use_query_map}",
+        "let params = use_params_map()",
+        "params.read().get(\"id\")",
+        "name=\"post_id\"",
+        "type=\"hidden\"",
+        "EditorDeletePostInput",
+        "delete_editor_post(input.session_id, input.post_id)",
+        "delete_post_action.dispatch(",
+        "删除成功",
+        "删除失败",
+        "post_id().is_empty()",
+    ] {
+        assert!(
+            editor_page.contains(required),
+            "editor page should update/delete existing post fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn editor_page_loads_existing_post_into_edit_form() {
+    let editor_page =
+        std::fs::read_to_string("src/pages/editor.rs").expect("read editor page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for required in [
+        "pub async fn load_editor_post(",
+        "Result<Option<PostDetail>, ServerFnError>",
+        ".current_session(session_id)",
+        ".post_detail(post_id)",
+        "post.summary.author_id != session.user.user_id",
+        "ForumError::Forbidden",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "editor load server path missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "load_editor_post",
+        "Resource::new(",
+        "editor_post.get()",
+        "editor_loaded",
+        "title_value.set(post.summary.title.clone())",
+        "summary_value.set(post.summary.summary.clone())",
+        "category_value.set(post.summary.category_name.clone().unwrap_or_default())",
+        "tag_names_value.set(post.summary.tags.join(\", \"))",
+        "markdown_value.set(post.markdown.clone())",
+        "prop:value=move || title_value.get()",
+        "prop:value=move || summary_value.get()",
+        "prop:value=move || category_value.get()",
+        "prop:value=move || tag_names_value.get()",
+        "on:input=move |event| title_value.set(event_target_value(&event))",
+    ] {
+        assert!(
+            editor_page.contains(required),
+            "editor page should prefill edit form fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn post_detail_page_submits_comments_with_session_action() {
+    let post_detail =
+        std::fs::read_to_string("src/pages/post_detail.rs").expect("read post detail source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for required in [
+        "pub async fn submit_comment(",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&post_id)",
+        ".current_session(session_id)",
+        ".add_comment(",
+        "CreateCommentRequest",
+        "Result<CommentNode, ServerFnError>",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "comment submit server function missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "use leptos::form::ActionForm",
+        "SubmitComment",
+        "ServerAction::<SubmitComment>::new()",
+        "<ActionForm action=comment_action>",
+        "name=\"session_id\"",
+        "name=\"post_id\"",
+        "name=\"parent_comment_id\"",
+        "name=\"content\"",
+        "comment_action.value()",
+        "评论成功",
+        "评论失败",
+    ] {
+        assert!(
+            post_detail.contains(required),
+            "post detail comment form should submit through server action fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn post_detail_page_toggles_post_reactions_and_author_follow_with_session_actions() {
+    let post_detail =
+        std::fs::read_to_string("src/pages/post_detail.rs").expect("read post detail source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for required in [
+        "pub async fn toggle_post_like(",
+        "pub async fn toggle_post_favorite(",
+        "pub async fn toggle_author_follow(",
+        "Result<ToggleResult, ServerFnError>",
+        "Result<FollowState, ServerFnError>",
+        ".current_session(session_id)",
+        ".toggle_post_like(session.user.user_id, post_id)",
+        ".toggle_post_favorite(session.user.user_id, post_id)",
+        ".follow_user(session.user.user_id, author_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "post detail interaction server function missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "TogglePostLike",
+        "TogglePostFavorite",
+        "ToggleAuthorFollow",
+        "ServerAction::<TogglePostLike>::new()",
+        "ServerAction::<TogglePostFavorite>::new()",
+        "ServerAction::<ToggleAuthorFollow>::new()",
+        "let like_result = like_action.value()",
+        "let favorite_result = favorite_action.value()",
+        "let follow_result = follow_action.value()",
+        "name=\"session_id\"",
+        "name=\"post_id\"",
+        "name=\"author_id\"",
+        "点赞成功",
+        "收藏成功",
+        "关注成功",
+        "互动失败",
+    ] {
+        assert!(
+            post_detail.contains(required),
+            "post detail interaction buttons should submit through server actions fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn post_detail_page_replies_to_comments_with_parent_comment_action_forms() {
+    let post_detail =
+        std::fs::read_to_string("src/pages/post_detail.rs").expect("read post detail source");
+
+    for required in [
+        "fn CommentItem(",
+        "comment_action: ServerAction<SubmitComment>",
+        "session_id: String",
+        "post_id: String",
+        "let reply_session_id = session_id.clone()",
+        "let reply_post_id = post_id.clone()",
+        "let reply_parent_comment_id = comment.comment_id.to_string()",
+        "let reply_submit_disabled = session_id.clone()",
+        "<ActionForm action=comment_action>",
+        "name=\"parent_comment_id\"",
+        "value=reply_parent_comment_id",
+        "placeholder=\"回复这条评论\"",
+        "提交回复",
+        "disabled=move || reply_submit_disabled.is_empty()",
+        "<CommentItem comment=reply comment_action comment_like_action comment_delete_action report_comment_action session_id=session_id.clone() post_id=post_id.clone()/>",
+    ] {
+        assert!(
+            post_detail.contains(required),
+            "post detail reply form should submit parent comments through server action fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn post_detail_page_toggles_and_deletes_comments_with_session_actions() {
+    let post_detail =
+        std::fs::read_to_string("src/pages/post_detail.rs").expect("read post detail source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for required in [
+        "pub async fn toggle_comment_like(",
+        "pub async fn delete_own_comment(",
+        "Result<ToggleResult, ServerFnError>",
+        "Result<CommentNode, ServerFnError>",
+        "Uuid::parse_str(&comment_id)",
+        ".current_session(session_id)",
+        ".toggle_comment_like(session.user.user_id, comment_id)",
+        ".delete_own_comment(session.user.user_id, comment_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "comment interaction server function missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "ToggleCommentLike",
+        "DeleteOwnComment",
+        "ServerAction::<ToggleCommentLike>::new()",
+        "ServerAction::<DeleteOwnComment>::new()",
+        "let comment_like_result = comment_like_action.value()",
+        "let comment_delete_result = comment_delete_action.value()",
+        "comment_like_action: ServerAction<ToggleCommentLike>",
+        "comment_delete_action: ServerAction<DeleteOwnComment>",
+        "let comment_like_id = comment.comment_id.to_string()",
+        "let comment_delete_id = comment.comment_id.to_string()",
+        "<ActionForm action=comment_like_action>",
+        "<ActionForm action=comment_delete_action>",
+        "name=\"comment_id\"",
+        "点赞评论",
+        "删除自己的评论",
+        "评论点赞成功",
+        "评论删除成功",
+        "评论操作失败",
+        "<CommentItem comment=reply comment_action comment_like_action comment_delete_action report_comment_action session_id=session_id.clone() post_id=post_id.clone()/>",
+    ] {
+        assert!(
+            post_detail.contains(required),
+            "post detail comment like/delete should submit through server actions fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn post_detail_page_reports_posts_and_comments_with_session_actions() {
+    let post_detail =
+        std::fs::read_to_string("src/pages/post_detail.rs").expect("read post detail source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for required in [
+        "pub async fn report_post(",
+        "pub async fn report_comment(",
+        "Result<ReportItem, ServerFnError>",
+        "ReportTargetType::Post",
+        "ReportTargetType::Comment",
+        "CreateReportRequest",
+        "Uuid::parse_str(&target_id)",
+        "Uuid::parse_str(&comment_id)",
+        ".current_session(session_id)",
+        ".create_report(",
+        ".report_comment(",
+        "session.user.user_id,",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "report server function missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "ReportPost",
+        "ReportComment",
+        "ServerAction::<ReportPost>::new()",
+        "ServerAction::<ReportComment>::new()",
+        "let report_post_result = report_post_action.value()",
+        "let report_comment_result = report_comment_action.value()",
+        "report_comment_action: ServerAction<ReportComment>",
+        "<ActionForm action=report_post_action>",
+        "<ActionForm action=report_comment_action>",
+        "name=\"target_id\"",
+        "name=\"comment_id\"",
+        "name=\"reason\"",
+        "name=\"description\"",
+        "内容不友好",
+        "举报帖子",
+        "举报评论",
+        "举报成功",
+        "举报失败",
+        "<CommentItem comment=reply comment_action comment_like_action comment_delete_action report_comment_action session_id=session_id.clone() post_id=post_id.clone()/>",
+    ] {
+        assert!(
+            post_detail.contains(required),
+            "post detail report controls should submit through server actions fragment: {required}"
+        );
+    }
 }
 
 #[test]
@@ -4367,6 +4925,57 @@ fn notification_fallback_data_is_wasm_hydration_safe() {
 }
 
 #[test]
+fn notifications_page_marks_read_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let page = std::fs::read_to_string(manifest_dir.join("src/pages/notifications.rs"))
+        .expect("read notifications page source");
+
+    for required in [
+        "pub async fn load_notifications_page(",
+        "session_id: String,",
+        "pub async fn mark_page_notification_read(",
+        "pub async fn mark_all_page_notifications_read(",
+        "Result<NotificationCenter, ServerFnError>",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&notification_id)",
+        ".current_session(session_id)",
+        ".notification_center(session.user.user_id)",
+        ".mark_notification_read(session.user.user_id, notification_id)",
+        ".mark_all_notifications_read(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "notification page server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "use leptos::form::ActionForm;",
+        "MarkAllPageNotificationsRead",
+        "MarkPageNotificationRead",
+        "ServerAction::<MarkPageNotificationRead>::new()",
+        "ServerAction::<MarkAllPageNotificationsRead>::new()",
+        "load_notifications_page(session_id)",
+        "ActionForm action=mark_all_action",
+        "ActionForm action=mark_read_action",
+        "name=\"session_id\"",
+        "name=\"notification_id\"",
+        "value=notification.notification_id.to_string()",
+        "全部已读",
+        "标记已读",
+        "已读成功",
+        "已读失败",
+    ] {
+        assert!(
+            page.contains(required),
+            "notification page action UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn notification_push_contract_tracks_online_connections_and_pending_payloads() {
     let store = post::state::ForumStore::seeded();
     let author = store.demo_user();
@@ -4621,6 +5230,325 @@ fn admin_dashboard_requires_admin_and_exposes_rbac_menu() {
 }
 
 #[test]
+fn admin_page_disables_and_enables_users_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let admin_domain = std::fs::read_to_string(manifest_dir.join("src/domain/admin.rs"))
+        .expect("read admin domain source");
+
+    for required in ["pub user_id: Uuid,", "AdminUserRow {", "user_id:"] {
+        assert!(
+            admin_domain.contains(required),
+            "admin dashboard user rows should expose target user id fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn load_admin_dashboard(",
+        "session_id: String",
+        "pub async fn disable_admin_user(",
+        "pub async fn enable_admin_user(",
+        "target_user_id: String",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&target_user_id)",
+        ".current_session(session_id)",
+        ".disable_user(",
+        ".enable_user(",
+        "AuditContext::default()",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin user status server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "use leptos::form::ActionForm;",
+        "use leptos_router::hooks::use_query_map;",
+        "DisableAdminUser",
+        "EnableAdminUser",
+        "ServerAction::<DisableAdminUser>::new()",
+        "ServerAction::<EnableAdminUser>::new()",
+        "load_admin_dashboard(session_id)",
+        "let disable_user_result = disable_user_action.value()",
+        "let enable_user_result = enable_user_action.value()",
+        "ActionForm action=disable_user_action",
+        "ActionForm action=enable_user_action",
+        "name=\"session_id\"",
+        "name=\"target_user_id\"",
+        "value=user.user_id.to_string()",
+        "禁用用户",
+        "解禁用户",
+        "用户状态更新成功",
+        "用户状态更新失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin user status UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_moderates_posts_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let admin_domain = std::fs::read_to_string(manifest_dir.join("src/domain/admin.rs"))
+        .expect("read admin domain source");
+
+    for required in ["pub post_id: Uuid,", "AdminPostRow {", "post_id:"] {
+        assert!(
+            admin_domain.contains(required),
+            "admin dashboard post rows should expose target post id fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn take_down_admin_post(",
+        "pub async fn restore_admin_post(",
+        "pub async fn delete_admin_post(",
+        "pub async fn pin_admin_post(",
+        "pub async fn unpin_admin_post(",
+        "post_id: String",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&post_id)",
+        ".current_session(session_id)",
+        ".take_down_post(",
+        ".restore_post(",
+        ".delete_post(",
+        ".pin_post(",
+        ".unpin_post(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin post moderation server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "TakeDownAdminPost",
+        "RestoreAdminPost",
+        "DeleteAdminPost",
+        "PinAdminPost",
+        "UnpinAdminPost",
+        "ServerAction::<TakeDownAdminPost>::new()",
+        "ServerAction::<RestoreAdminPost>::new()",
+        "ServerAction::<DeleteAdminPost>::new()",
+        "ServerAction::<PinAdminPost>::new()",
+        "ServerAction::<UnpinAdminPost>::new()",
+        "let take_down_post_result = take_down_post_action.value()",
+        "let restore_post_result = restore_post_action.value()",
+        "let delete_post_result = delete_post_action.value()",
+        "let pin_post_result = pin_post_action.value()",
+        "let unpin_post_result = unpin_post_action.value()",
+        "ActionForm action=take_down_post_action",
+        "ActionForm action=restore_post_action",
+        "ActionForm action=delete_post_action",
+        "ActionForm action=pin_post_action",
+        "ActionForm action=unpin_post_action",
+        "name=\"session_id\"",
+        "name=\"post_id\"",
+        "value=post.post_id.to_string()",
+        "帖子状态更新成功",
+        "帖子状态更新失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin post moderation UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_moderates_comments_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let admin_domain = std::fs::read_to_string(manifest_dir.join("src/domain/admin.rs"))
+        .expect("read admin domain source");
+
+    for required in ["pub comment_id: Uuid,", "AdminCommentRow {", "comment_id:"] {
+        assert!(
+            admin_domain.contains(required),
+            "admin dashboard comment rows should expose target comment id fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn delete_admin_comment(",
+        "pub async fn recover_admin_comment(",
+        "comment_id: String",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&comment_id)",
+        ".current_session(session_id)",
+        ".delete_comment(",
+        ".recover_comment(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin comment moderation server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "DeleteAdminComment",
+        "RecoverAdminComment",
+        "ServerAction::<DeleteAdminComment>::new()",
+        "ServerAction::<RecoverAdminComment>::new()",
+        "let delete_comment_result = delete_comment_action.value()",
+        "let recover_comment_result = recover_comment_action.value()",
+        "ActionForm action=delete_comment_action",
+        "ActionForm action=recover_comment_action",
+        "name=\"session_id\"",
+        "name=\"comment_id\"",
+        "value=comment.comment_id.to_string()",
+        "删除评论",
+        "恢复评论",
+        "评论状态更新成功",
+        "评论状态更新失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin comment moderation UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_handles_reports_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let admin_domain = std::fs::read_to_string(manifest_dir.join("src/domain/admin.rs"))
+        .expect("read admin domain source");
+
+    for required in ["pub report_id: Uuid,", "AdminReportRow {", "report_id:"] {
+        assert!(
+            admin_domain.contains(required),
+            "admin dashboard report rows should expose target report id fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn handle_admin_report(",
+        "pub async fn reject_admin_report(",
+        "report_id: String",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&report_id)",
+        ".current_session(session_id)",
+        ".handle_report(",
+        "HandleReportRequest",
+        "ReportStatus::Handled",
+        "ReportStatus::Rejected",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin report handling server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "HandleAdminReport",
+        "RejectAdminReport",
+        "ServerAction::<HandleAdminReport>::new()",
+        "ServerAction::<RejectAdminReport>::new()",
+        "let handle_report_result = handle_report_action.value()",
+        "let reject_report_result = reject_report_action.value()",
+        "ActionForm action=handle_report_action",
+        "ActionForm action=reject_report_action",
+        "name=\"session_id\"",
+        "name=\"report_id\"",
+        "value=report.report_id.to_string()",
+        "标记已处理",
+        "驳回",
+        "举报处理成功",
+        "举报处理失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin report handling UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_publishes_and_withdraws_announcements_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let admin_domain = std::fs::read_to_string(manifest_dir.join("src/domain/admin.rs"))
+        .expect("read admin domain source");
+
+    for required in [
+        "pub announcement_id: Uuid,",
+        "AdminAnnouncementRow {",
+        "announcement_id:",
+    ] {
+        assert!(
+            admin_domain.contains(required),
+            "admin dashboard announcement rows should expose target announcement id fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn publish_admin_announcement(",
+        "pub async fn withdraw_admin_announcement(",
+        "announcement_id: String",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&announcement_id)",
+        ".current_session(session_id)",
+        ".publish_announcement(",
+        ".withdraw_announcement(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin announcement server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "PublishAdminAnnouncement",
+        "WithdrawAdminAnnouncement",
+        "ServerAction::<PublishAdminAnnouncement>::new()",
+        "ServerAction::<WithdrawAdminAnnouncement>::new()",
+        "let publish_announcement_result = publish_announcement_action.value()",
+        "let withdraw_announcement_result = withdraw_announcement_action.value()",
+        "ActionForm action=publish_announcement_action",
+        "ActionForm action=withdraw_announcement_action",
+        "name=\"session_id\"",
+        "name=\"announcement_id\"",
+        "value=announcement.announcement_id.to_string()",
+        "发布公告",
+        "下线公告",
+        "重新发布",
+        "公告状态更新成功",
+        "公告状态更新失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin announcement UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn admin_routes_are_registered() {
     assert!(post::app::primary_routes().contains(&"/admin"));
     assert!(post::app::api_route_inventory().contains(&"/api/admin/dashboard"));
@@ -4745,18 +5673,9 @@ fn rustfs_object_store_adapter_contract_uses_s3_put_object() {
         .expect("RustFS object store adapter should exist");
 
     for required in [
-        "aws_credential_types::Credentials",
-        "aws_sdk_s3::{Client, config::Region, primitives::ByteStream}",
-        "Credentials::new",
-        "aws_config::defaults(aws_config::BehaviorVersion::latest())",
-        ".region(Region::new(config.region))",
-        ".credentials_provider(credentials)",
-        ".endpoint_url(config.endpoint_url)",
-        ".load()",
-        ".await",
-        "aws_sdk_s3::config::Builder::from(&shared_config)",
-        ".force_path_style(config.force_path_style)",
-        "Client::from_conf(s3_config)",
+        "aws_sdk_s3::{Client, primitives::ByteStream}",
+        "aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await",
+        "Client::new(&shared_config)",
         "async fn ensure_bucket",
         ".head_bucket()",
         ".create_bucket()",
@@ -4781,10 +5700,10 @@ fn rustfs_object_store_adapter_contract_uses_s3_put_object() {
     let env = include_str!("../.env.example");
     for required in [
         "RUSTFS_BUCKET=post-assets",
-        "RUSTFS_REGION=us-east-1",
-        "RUSTFS_ACCESS_KEY=rustfsadmin",
-        "RUSTFS_SECRET_KEY=rustfsadmin",
-        "RUSTFS_FORCE_PATH_STYLE=true",
+        "AWS_REGION=us-east-1",
+        "AWS_ACCESS_KEY_ID=rustfsadmin",
+        "AWS_SECRET_ACCESS_KEY=rustfsadmin",
+        "AWS_ENDPOINT_URL=http://127.0.0.1:9000",
     ] {
         assert!(
             env.contains(required),
@@ -4958,6 +5877,115 @@ fn user_profile_contract_supports_profile_avatar_and_password_updates() {
         .expect("change password");
     assert!(store.login("profile-user", "password").is_err());
     assert!(store.login("profile-user", "new-password").is_ok());
+}
+
+#[test]
+fn user_space_page_updates_profile_avatar_and_password_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let page = std::fs::read_to_string(manifest_dir.join("src/pages/user_space.rs"))
+        .expect("read user space page source");
+
+    for required in [
+        "pub async fn update_me_profile(",
+        "pub async fn update_me_avatar(",
+        "pub async fn change_me_password(",
+        "UpdateProfileRequest { nickname, bio }",
+        "UpdateAvatarRequest { avatar_url }",
+        "ChangePasswordRequest {",
+        "old_password,",
+        "new_password,",
+        "Uuid::parse_str(&session_id)",
+        ".current_session(session_id)",
+        ".update_profile(",
+        ".update_avatar(",
+        ".change_password(",
+        "session.user.user_id,",
+        "pub async fn load_user_space_page(",
+        "viewer_session_id: Option<String>,",
+        ".user_space(user_id, Some(user_id))",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "user settings server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "use leptos::form::ActionForm;",
+        "use leptos_router::hooks::{use_params_map, use_query_map};",
+        "UpdateMeProfile",
+        "UpdateMeAvatar",
+        "ChangeMePassword",
+        "ServerAction::<UpdateMeProfile>::new()",
+        "ServerAction::<UpdateMeAvatar>::new()",
+        "ServerAction::<ChangeMePassword>::new()",
+        "load_user_space_page(user_id, Some(session_id))",
+        "ActionForm action=profile_action",
+        "ActionForm action=avatar_action",
+        "ActionForm action=password_action",
+        "name=\"session_id\"",
+        "name=\"nickname\"",
+        "name=\"bio\"",
+        "name=\"avatar_url\"",
+        "name=\"old_password\"",
+        "name=\"new_password\"",
+        "修改昵称和简介",
+        "修改头像",
+        "修改密码",
+        "资料更新成功",
+        "头像更新成功",
+        "密码更新成功",
+    ] {
+        assert!(
+            page.contains(required),
+            "user space settings UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn user_profile_page_toggles_follow_with_session_action() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let page = std::fs::read_to_string(manifest_dir.join("src/pages/user_space.rs"))
+        .expect("read user space page source");
+
+    for required in [
+        "pub async fn toggle_author_follow(",
+        "Result<FollowState, ServerFnError>",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&author_id)",
+        ".current_session(session_id)",
+        ".follow_user(session.user.user_id, author_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "profile follow server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "ToggleAuthorFollow",
+        "ServerAction::<ToggleAuthorFollow>::new()",
+        "let follow_result = follow_action.value()",
+        "ActionForm action=follow_action",
+        "name=\"session_id\"",
+        "name=\"author_id\"",
+        "value=move || profile.get().user_id.to_string()",
+        "follow_pending.get()",
+        "关注用户",
+        "取消关注",
+        "关注成功",
+        "关注失败",
+    ] {
+        assert!(
+            page.contains(required),
+            "user profile follow UI missing fragment: {required}"
+        );
+    }
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::domain::rbac::{Permission, admin_permissions};
 
@@ -33,6 +34,7 @@ pub struct AdminMenuItem {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminUserRow {
+    pub user_id: Uuid,
     pub username: String,
     pub nickname: String,
     pub roles: Vec<String>,
@@ -42,6 +44,7 @@ pub struct AdminUserRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminPostRow {
+    pub post_id: Uuid,
     pub title: String,
     pub author: String,
     pub category: String,
@@ -51,6 +54,7 @@ pub struct AdminPostRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminCommentRow {
+    pub comment_id: Uuid,
     pub post_title: String,
     pub author: String,
     pub content: String,
@@ -60,6 +64,7 @@ pub struct AdminCommentRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminReportRow {
+    pub report_id: Uuid,
     pub target: String,
     pub target_type: String,
     pub reason: String,
@@ -89,6 +94,7 @@ pub struct AdminTagRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminAnnouncementRow {
+    pub announcement_id: Uuid,
     pub title: String,
     pub announcement_type: String,
     pub audience: String,
@@ -136,6 +142,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
         permissions: admin_permissions(),
         users: vec![
             AdminUserRow {
+                user_id: Uuid::from_u128(1),
                 username: "mah".to_string(),
                 nickname: "mah".to_string(),
                 roles: vec!["admin".to_string()],
@@ -143,6 +150,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 actions: vec!["调整角色".to_string(), "禁用用户".to_string()],
             },
             AdminUserRow {
+                user_id: Uuid::from_u128(2),
                 username: "managed-user".to_string(),
                 nickname: "managed-user".to_string(),
                 roles: vec!["member".to_string()],
@@ -152,6 +160,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
         ],
         moderation_posts: vec![
             AdminPostRow {
+                post_id: Uuid::from_u128(101),
                 title: "Leptos + Axum 构建全栈应用".to_string(),
                 author: "Skyline".to_string(),
                 category: "经验分享".to_string(),
@@ -164,6 +173,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 ],
             },
             AdminPostRow {
+                post_id: Uuid::from_u128(102),
                 title: "表单验证实践".to_string(),
                 author: "hello-rust".to_string(),
                 category: "教程".to_string(),
@@ -173,6 +183,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
         ],
         moderation_comments: vec![
             AdminCommentRow {
+                comment_id: Uuid::from_u128(201),
                 post_title: "在 server function 中使用 SQLx 事务的最佳实践".to_string(),
                 author: "wangxy".to_string(),
                 content: "这个事务边界解释得很清楚".to_string(),
@@ -180,6 +191,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 actions: vec!["删除评论".to_string(), "查看帖子".to_string()],
             },
             AdminCommentRow {
+                comment_id: Uuid::from_u128(202),
                 post_title: "Markdown 渲染时如何高亮显示 Rust 代码？".to_string(),
                 author: "visitor".to_string(),
                 content: "该评论已被删除".to_string(),
@@ -239,6 +251,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
         ],
         announcements: vec![
             AdminAnnouncementRow {
+                announcement_id: Uuid::from_u128(201),
                 title: "论坛升级与搜索增强说明".to_string(),
                 announcement_type: "系统公告".to_string(),
                 audience: "全体用户".to_string(),
@@ -246,6 +259,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 actions: vec!["下线公告".to_string(), "推送公告".to_string()],
             },
             AdminAnnouncementRow {
+                announcement_id: Uuid::from_u128(202),
                 title: "标签体系调整公告".to_string(),
                 announcement_type: "运营公告".to_string(),
                 audience: "指定角色".to_string(),
@@ -255,6 +269,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
         ],
         reports: vec![
             AdminReportRow {
+                report_id: Uuid::from_u128(301),
                 target: "Markdown 渲染时如何高亮显示 Rust 代码？".to_string(),
                 target_type: "帖子".to_string(),
                 reason: "垃圾广告".to_string(),
@@ -267,6 +282,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 ],
             },
             AdminReportRow {
+                report_id: Uuid::from_u128(302),
                 target: "关于 resources! 宏在条件渲染下重复请求的问题".to_string(),
                 target_type: "评论".to_string(),
                 reason: "人身攻击".to_string(),

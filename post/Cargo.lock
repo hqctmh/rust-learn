@@ -3052,7 +3052,6 @@ dependencies = [
  "anyhow",
  "async-nats",
  "aws-config",
- "aws-credential-types",
  "aws-sdk-s3",
  "axum",
  "base64",
@@ -3075,6 +3074,7 @@ dependencies = [
  "tokio",
  "uuid",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

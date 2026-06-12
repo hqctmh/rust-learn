@@ -15,6 +15,15 @@ use crate::{
 pub struct PostAuthoringService;
 
 impl PostAuthoringService {
+    pub fn preview_markdown(markdown: &str) -> Result<String, ForumError> {
+        let markdown = markdown.trim();
+        if markdown.is_empty() {
+            return Err(ForumError::Validation("正文不能为空".to_string()));
+        }
+
+        Ok(render_markdown_safe(markdown))
+    }
+
     pub fn build_post(
         post_id: Uuid,
         author: &SessionUser,

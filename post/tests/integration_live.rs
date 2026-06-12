@@ -14,12 +14,7 @@ async fn runtime_integration_handler_drains_live_redis_nats_and_elasticsearch() 
         home_sidebar_cache_enabled: false,
         home_sidebar_cache_ttl_seconds: 60,
         nats_url: "nats://localhost:4222".to_string(),
-        rustfs_endpoint: "http://localhost:9000".to_string(),
         rustfs_bucket: "post-assets".to_string(),
-        rustfs_region: "us-east-1".to_string(),
-        rustfs_access_key: "rustfsadmin".to_string(),
-        rustfs_secret_key: "rustfsadmin".to_string(),
-        rustfs_force_path_style: true,
         elasticsearch_url: "http://localhost:9200".to_string(),
         elasticsearch_search_index: "posts".to_string(),
         search_backend: "postgres".to_string(),
@@ -165,12 +160,7 @@ async fn rustfs_object_store_uploads_to_live_rustfs() {
     let suffix = Uuid::new_v4().simple().to_string();
     let store = post::object_store::RustfsObjectStore::from_config(
         post::object_store::RustfsObjectStoreConfig {
-            endpoint_url: "http://localhost:9000".to_string(),
-            region: "us-east-1".to_string(),
             bucket: "post-assets".to_string(),
-            access_key_id: "rustfsadmin".to_string(),
-            secret_access_key: "rustfsadmin".to_string(),
-            force_path_style: true,
         },
     )
     .await
