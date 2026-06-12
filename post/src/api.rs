@@ -45,6 +45,7 @@ use crate::{
         },
     },
     error::ForumError,
+    services::notifications::NotificationPushService,
     state::AppState,
 };
 
@@ -651,29 +652,61 @@ async fn notification_socket_session(mut socket: WebSocket, state: AppState, use
         return;
     }
 
-    if let Ok(pushes) = state.pending_notification_pushes(user_id).await {
-        for push in pushes {
-            let text = format!(
-                "notification:{}:{}",
-                push.notification_id,
-                push.title.replace('\n', " ")
-            );
-            if socket.send(Message::Text(text.into())).await.is_err() {
-                let _ = state.disconnect_notification_socket(user_id).await;
-                return;
-            }
-        }
+    if send_pending_notification_pushes(&mut socket, &state, user_id)
+        .await
+        .is_err()
+    {
+        let _ = state.disconnect_notification_socket(user_id).await;
+        return;
     }
 
-    while let Some(Ok(message)) = socket.recv().await {
-        if let Message::Text(text) = message {
-            if let Ok(push_id) = Uuid::parse_str(text.trim()) {
-                let _ = state.ack_notification_push(user_id, push_id).await;
+    let mut push_interval = tokio::time::interval(std::time::Duration::from_millis(500));
+    loop {
+        tokio::select! {
+            message = socket.recv() => {
+                match message {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Some(push_id) = NotificationPushService::ack_message_to_push_id(text.trim()) {
+                            let _ = state.ack_notification_push(user_id, push_id).await;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) => break,
+                }
+            }
+            _ = push_interval.tick() => {
+                if send_pending_notification_pushes(&mut socket, &state, user_id)
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
             }
         }
     }
 
     let _ = state.disconnect_notification_socket(user_id).await;
+}
+
+async fn send_pending_notification_pushes(
+    socket: &mut WebSocket,
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<(), ()> {
+    let pushes = state
+        .pending_notification_pushes(user_id)
+        .await
+        .map_err(|_| ())?;
+    for push in pushes {
+        let text = NotificationPushService::websocket_payload(&push).map_err(|_| ())?;
+        socket
+            .send(Message::Text(text.into()))
+            .await
+            .map_err(|_| ())?;
+        let _ = state.ack_notification_push(user_id, push.push_id).await;
+    }
+    Ok(())
 }
 
 async fn notification_online_stats(

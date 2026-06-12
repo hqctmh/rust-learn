@@ -237,7 +237,7 @@ fn CategoryPanel(categories: Vec<HomeCategory>) -> impl IntoView {
                     </li>
                 }).collect_view()}
             </ul>
-            <a class="link-action" href="/?tab=latest&category=all">"查看全部分类 →"</a>
+            <a class="link-action" href="/categories">"查看全部分类 →"</a>
         </section>
     }
 }
@@ -255,7 +255,7 @@ fn TagPanel(tags: Vec<HomeTag>) -> impl IntoView {
                     }
                 }).collect_view()}
             </div>
-            <a class="link-action" href="/?tab=latest&tag=all">"查看全部标签 →"</a>
+            <a class="link-action" href="/tags">"查看全部标签 →"</a>
         </section>
     }
 }
@@ -270,7 +270,7 @@ fn AnnouncementPanel(announcements: Vec<HomeAnnouncement>) -> impl IntoView {
                     <li><span>{announcement.title}</span><time>{announcement.date_label}</time></li>
                 }).collect_view()}
             </ul>
-            <a class="link-action" href="/?tab=latest&sort=created">"查看全部公告 →"</a>
+            <a class="link-action" href="/announcements">"查看全部公告 →"</a>
         </section>
     }
 }
@@ -289,7 +289,7 @@ fn AuthorPanel(authors: Vec<HomeActiveAuthor>) -> impl IntoView {
                     </li>
                 }).collect_view()}
             </ul>
-            <a class="link-action" href="/?tab=hot&sort=replies">"查看全部作者 →"</a>
+            <a class="link-action" href="/users">"查看全部作者 →"</a>
         </section>
     }
 }

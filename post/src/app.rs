@@ -12,6 +12,10 @@ use crate::pages::{
     login::LoginPage,
     notifications::NotificationsPage,
     post_detail::PostDetailPage,
+    public_indexes::{
+        ActivitiesIndexPage, AnnouncementsIndexPage, CategoriesIndexPage, DocsIndexPage,
+        PostsIndexPage, TagsIndexPage, UsersIndexPage,
+    },
     register::RegisterPage,
     search::SearchPage,
     user_space::{MePage, UserProfilePage},
@@ -21,6 +25,13 @@ pub fn primary_routes() -> Vec<&'static str> {
     vec![
         "/",
         "/search",
+        "/posts",
+        "/categories",
+        "/tags",
+        "/announcements",
+        "/users",
+        "/docs",
+        "/activities",
         "/notifications",
         "/users/sample",
         "/me",
@@ -148,6 +159,13 @@ pub fn App() -> impl IntoView {
             <Routes fallback=|| view! { <main class="min-h-screen bg-base-200 p-8">"页面不存在"</main> }>
                 <Route path=path!("") view=HomePage/>
                 <Route path=path!("search") view=SearchPage/>
+                <Route path=path!("posts") view=PostsIndexPage/>
+                <Route path=path!("categories") view=CategoriesIndexPage/>
+                <Route path=path!("tags") view=TagsIndexPage/>
+                <Route path=path!("announcements") view=AnnouncementsIndexPage/>
+                <Route path=path!("users") view=UsersIndexPage/>
+                <Route path=path!("docs") view=DocsIndexPage/>
+                <Route path=path!("activities") view=ActivitiesIndexPage/>
                 <Route path=path!("notifications") view=NotificationsPage/>
                 <Route path=path!("users/:id") view=UserProfilePage/>
                 <Route path=path!("me") view=MePage/>

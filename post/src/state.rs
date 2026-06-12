@@ -76,16 +76,27 @@ use crate::object_store::{RustfsObjectStore, RustfsObjectStoreConfig};
 
 #[cfg(feature = "ssr")]
 use crate::repositories::{
-    announcements::PostgresAnnouncementRepository, auth::PostgresAuthRepository,
-    comments::PostgresCommentRepository, files::PostgresFileRepository,
-    follows::PostgresFollowRepository, home::PostgresHomeRepository,
-    integrations::PostgresIntegrationRepository, moderation::PostgresModerationRepository,
-    notifications::PostgresNotificationRepository, posts::PostgresPostRepository,
-    rbac::PostgresRbacRepository, reactions::PostgresReactionRepository,
-    reports::PostgresReportRepository, search::PostgresSearchRepository,
-    taxonomy::PostgresTaxonomyRepository, user_admin::PostgresUserAdminRepository,
+    announcements::PostgresAnnouncementRepository,
+    auth::PostgresAuthRepository,
+    comments::PostgresCommentRepository,
+    files::PostgresFileRepository,
+    follows::PostgresFollowRepository,
+    home::PostgresHomeRepository,
+    integrations::PostgresIntegrationRepository,
+    moderation::PostgresModerationRepository,
+    notifications::PostgresNotificationRepository,
+    posts::PostgresPostRepository,
+    rbac::PostgresRbacRepository,
+    reactions::PostgresReactionRepository,
+    reports::PostgresReportRepository,
+    search::{ElasticsearchSearchRepository, PostgresSearchRepository},
+    taxonomy::PostgresTaxonomyRepository,
+    user_admin::PostgresUserAdminRepository,
     users::PostgresUserSettingsRepository,
 };
+
+#[cfg(feature = "ssr")]
+use crate::repositories::home::{HomeSidebarSnapshot, RedisHomeCacheRepository};
 
 #[cfg(feature = "ssr")]
 #[derive(Clone)]
@@ -1541,6 +1552,20 @@ impl AppState {
             .into_iter()
             .map(crate::domain::home::home_topic_from_post_summary)
             .collect();
+
+        let runtime_config = RuntimeConfig::from_env();
+        if runtime_config.home_sidebar_cache_enabled {
+            if let Ok(cache) = RedisHomeCacheRepository::from_url(
+                &runtime_config.redis_url,
+                runtime_config.home_sidebar_cache_ttl_seconds,
+            ) {
+                if let Ok(Some(snapshot)) = cache.try_read_sidebar().await {
+                    snapshot.apply_to_home(&mut home);
+                    return Ok(home);
+                }
+            }
+        }
+
         home.categories = PostgresHomeRepository::list_homepage_categories(pool)
             .await
             .map_err(|_| ForumError::Internal)?;
@@ -1553,6 +1578,18 @@ impl AppState {
         home.active_authors = PostgresHomeRepository::list_active_authors(pool, 5)
             .await
             .map_err(|_| ForumError::Internal)?;
+
+        if runtime_config.home_sidebar_cache_enabled {
+            if let Ok(cache) = RedisHomeCacheRepository::from_url(
+                &runtime_config.redis_url,
+                runtime_config.home_sidebar_cache_ttl_seconds,
+            ) {
+                let _ = cache
+                    .write_sidebar(&HomeSidebarSnapshot::from_home(&home))
+                    .await;
+            }
+        }
+
         Ok(home)
     }
 
@@ -1560,6 +1597,19 @@ impl AppState {
         let Some(pool) = &self.db else {
             return self.forum.search(query);
         };
+
+        let runtime_config = RuntimeConfig::from_env();
+        if runtime_config.search_backend == "elasticsearch" {
+            let repository = ElasticsearchSearchRepository::from_url(
+                &runtime_config.elasticsearch_url,
+                runtime_config.elasticsearch_search_index,
+            )
+            .map_err(|_| ForumError::Internal)?;
+            return repository
+                .search_posts(query)
+                .await
+                .map_err(|_| ForumError::Internal);
+        }
 
         PostgresSearchRepository::search_posts(pool, query)
             .await
@@ -2025,6 +2075,8 @@ fn report_status_label(status: &ReportStatus) -> &'static str {
 pub struct RuntimeConfig {
     pub database_url: String,
     pub redis_url: String,
+    pub home_sidebar_cache_enabled: bool,
+    pub home_sidebar_cache_ttl_seconds: usize,
     pub nats_url: String,
     pub rustfs_endpoint: String,
     pub rustfs_bucket: String,
@@ -2033,6 +2085,8 @@ pub struct RuntimeConfig {
     pub rustfs_secret_key: String,
     pub rustfs_force_path_style: bool,
     pub elasticsearch_url: String,
+    pub elasticsearch_search_index: String,
+    pub search_backend: String,
     pub integration_worker_enabled: bool,
     pub integration_worker_batch_size: i64,
     pub integration_worker_max_attempts: i32,
@@ -2046,6 +2100,14 @@ impl RuntimeConfig {
                 .unwrap_or_else(|_| "postgres://post:post@localhost:5433/post".to_string()),
             redis_url: std::env::var("REDIS_URL")
                 .unwrap_or_else(|_| "redis://localhost:6380".to_string()),
+            home_sidebar_cache_enabled: std::env::var("HOME_SIDEBAR_CACHE_ENABLED")
+                .map(|value| value == "true" || value == "1")
+                .unwrap_or(false),
+            home_sidebar_cache_ttl_seconds: std::env::var("HOME_SIDEBAR_CACHE_TTL_SECONDS")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(60),
             nats_url: std::env::var("NATS_URL")
                 .unwrap_or_else(|_| "nats://localhost:4222".to_string()),
             rustfs_endpoint: std::env::var("RUSTFS_ENDPOINT")
@@ -2063,6 +2125,12 @@ impl RuntimeConfig {
                 .unwrap_or(true),
             elasticsearch_url: std::env::var("ELASTICSEARCH_URL")
                 .unwrap_or_else(|_| "http://localhost:9200".to_string()),
+            elasticsearch_search_index: std::env::var("ELASTICSEARCH_SEARCH_INDEX")
+                .unwrap_or_else(|_| "posts".to_string()),
+            search_backend: std::env::var("SEARCH_BACKEND")
+                .unwrap_or_else(|_| "postgres".to_string())
+                .trim()
+                .to_lowercase(),
             integration_worker_enabled: std::env::var("INTEGRATION_WORKER_ENABLED")
                 .map(|value| value == "true" || value == "1")
                 .unwrap_or(false),

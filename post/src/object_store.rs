@@ -40,11 +40,13 @@ impl RustfsObjectStore {
             None,
             "rustfs",
         );
-        let s3_config = aws_sdk_s3::config::Builder::new()
-            .behavior_version_latest()
+        let shared_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(Region::new(config.region))
             .credentials_provider(credentials)
             .endpoint_url(config.endpoint_url)
+            .load()
+            .await;
+        let s3_config = aws_sdk_s3::config::Builder::from(&shared_config)
             .force_path_style(config.force_path_style)
             .build();
 

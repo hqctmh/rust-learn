@@ -936,6 +936,77 @@ fn sqlx_home_sidebar_repository_contract_maps_homepage_sidebar_rows() {
 }
 
 #[test]
+fn redis_home_sidebar_cache_contract_preserves_all_sidebar_modules() {
+    let mut home =
+        post::domain::home::dense_workbench_home(post::domain::home::HomeQuery::default(), false);
+    home.categories = vec![post::domain::home::HomeCategory {
+        name: "教程".to_string(),
+        count: 34,
+        color: "green".to_string(),
+    }];
+    home.hot_tags = vec![post::domain::home::HomeTag {
+        name: "leptos".to_string(),
+        count: 132,
+    }];
+    home.announcements = vec![post::domain::home::HomeAnnouncement {
+        title: "论坛升级与搜索增强说明".to_string(),
+        date_label: "5 月 10 日".to_string(),
+    }];
+    home.active_authors = vec![post::domain::home::HomeActiveAuthor {
+        name: "张晨".to_string(),
+        avatar_label: "张".to_string(),
+        reply_count_label: "1.2k 条回复".to_string(),
+    }];
+
+    let snapshot = post::repositories::home::HomeSidebarSnapshot::from_home(&home);
+    let payload = snapshot.to_json().expect("serialize sidebar snapshot");
+    assert!(payload.contains("categories"));
+    assert!(payload.contains("hot_tags"));
+    assert!(payload.contains("announcements"));
+    assert!(payload.contains("active_authors"));
+
+    let decoded =
+        post::repositories::home::HomeSidebarSnapshot::from_json(&payload).expect("decode sidebar");
+    let mut target =
+        post::domain::home::dense_workbench_home(post::domain::home::HomeQuery::default(), false);
+    decoded.apply_to_home(&mut target);
+
+    assert_eq!(target.categories, home.categories);
+    assert_eq!(target.hot_tags, home.hot_tags);
+    assert_eq!(target.announcements, home.announcements);
+    assert_eq!(target.active_authors, home.active_authors);
+    assert_eq!(
+        post::repositories::home::RedisHomeCacheRepository::sidebar_cache_key(),
+        "home:sidebar:v1"
+    );
+}
+
+#[test]
+fn app_state_home_runtime_has_redis_sidebar_cache_boundary() {
+    let state_source =
+        std::fs::read_to_string("src/state.rs").expect("state source should be readable");
+    let home_source = std::fs::read_to_string("src/repositories/home.rs")
+        .expect("home repository source should be readable");
+
+    for required in [
+        "HOME_SIDEBAR_CACHE_ENABLED",
+        "HOME_SIDEBAR_CACHE_TTL_SECONDS",
+        "home_sidebar_cache_enabled",
+        "RedisHomeCacheRepository::from_url",
+        "try_read_sidebar",
+        "write_sidebar",
+        "redis::cmd(\"GET\")",
+        "redis::cmd(\"SET\")",
+        ".arg(\"EX\")",
+    ] {
+        assert!(
+            state_source.contains(required) || home_source.contains(required),
+            "missing Redis home sidebar cache fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn sqlx_repository_execution_uses_checked_macros() {
     let sources = [
         ("auth.rs", include_str!("../src/repositories/auth.rs")),
@@ -2599,6 +2670,76 @@ async fn app_state_search_reads_postgres_posts_with_filters_and_highlights() {
 }
 
 #[tokio::test]
+async fn app_state_search_reads_postgres_tags_and_users_with_sqlx_macros() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let user_keyword = format!("搜索用户{suffix}");
+    let session = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("search-source-{suffix}"),
+            password: "password".to_string(),
+            nickname: user_keyword.clone(),
+        })
+        .await
+        .expect("register postgres search source user");
+    let tag_keyword = format!("source-{suffix}");
+    state
+        .create_post(
+            session.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("Postgres source {suffix}"),
+                markdown: format!("正文包含 {tag_keyword}"),
+                summary: format!("摘要包含 {tag_keyword}"),
+                category_name: Some("教程".to_string()),
+                tag_names: vec![tag_keyword.clone()],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create post with searchable tag");
+
+    let tag_results = state
+        .search(post::domain::search::SearchQuery {
+            q: tag_keyword.clone(),
+            page_size: 10,
+            ..Default::default()
+        })
+        .await
+        .expect("search postgres tag source");
+    let tag = tag_results
+        .items
+        .iter()
+        .find(|item| item.kind == post::domain::search::SearchResultKind::Tag)
+        .expect("postgres search should include tag source");
+    assert_eq!(tag.title, format!("#{tag_keyword}"));
+    assert_eq!(tag.url, format!("/search?tag={tag_keyword}"));
+
+    let user_results = state
+        .search(post::domain::search::SearchQuery {
+            q: user_keyword.clone(),
+            page_size: 10,
+            ..Default::default()
+        })
+        .await
+        .expect("search postgres user source");
+    let user = user_results
+        .items
+        .iter()
+        .find(|item| item.kind == post::domain::search::SearchResultKind::User)
+        .expect("postgres search should include user source");
+    assert_eq!(user.id, session.user.user_id.to_string());
+    assert_eq!(user.title, user_keyword);
+    assert_eq!(user.url, format!("/users/{}", session.user.user_id));
+}
+
+#[tokio::test]
 async fn app_state_file_upload_persists_to_postgres_and_deduplicates_hash() {
     let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
         .await
@@ -3270,7 +3411,7 @@ async fn integration_outbox_worker_processes_successes_and_records_retriable_fai
         .await
         .expect("connect postgres");
     for row in
-        post::repositories::integrations::PostgresIntegrationRepository::list_pending(&pool, 500)
+        post::repositories::integrations::PostgresIntegrationRepository::list_pending(&pool, 10_000)
             .await
             .expect("list existing pending outbox rows")
     {
@@ -3309,7 +3450,7 @@ async fn integration_outbox_worker_processes_successes_and_records_retriable_fai
         TestIntegrationHandler {
             fail_subject: fail_subject.clone(),
         },
-        10,
+        10_000,
         3,
     );
     let report = worker.drain_once(&pool).await.expect("drain outbox once");
@@ -3445,6 +3586,48 @@ fn integration_outbox_worker_runtime_starts_from_main_when_enabled() {
 }
 
 #[test]
+fn integration_outbox_live_e2e_test_is_available_for_external_services() {
+    let live_source = std::fs::read_to_string("tests/integration_live.rs")
+        .expect("live integration test should exist");
+    let script = std::fs::read_to_string("scripts/run-integration-live.sh")
+        .expect("live integration test script should exist");
+
+    for required in [
+        "#[ignore]",
+        "rustfs_object_store_uploads_to_live_rustfs",
+        "runtime_integration_handler_drains_live_redis_nats_and_elasticsearch",
+        "RustfsObjectStore::from_config",
+        "put_object(object)",
+        "redis::cmd(\"SET\")",
+        "redis::cmd(\"EXISTS\")",
+        "async_nats::connect",
+        ".subscribe(",
+        "PostgresIntegrationRepository::insert_actions",
+        "IntegrationOutboxWorker::new",
+        "RuntimeIntegrationHandler::from_config",
+        "worker.drain_once(&pool).await",
+        "SearchParts::Index",
+        "DeleteParts::IndexId",
+    ] {
+        assert!(
+            live_source.contains(required),
+            "missing live integration test fragment: {required}"
+        );
+    }
+
+    for required in [
+        "docker compose -f docker-compose.yml up -d postgres redis nats rustfs elasticsearch",
+        "post-rustfs",
+        "cargo test --test integration_live -- --ignored --nocapture",
+    ] {
+        assert!(
+            script.contains(required),
+            "missing live test script fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn home_seed_content_exposes_forum_workflow() {
     let text = post::app::home_seed_text();
 
@@ -3556,6 +3739,150 @@ fn home_page_ui_inventory_matches_sidebar_and_pagination_contract() {
 }
 
 #[test]
+fn homepage_sidebar_view_all_links_have_public_routes() {
+    let routes = post::app::primary_routes();
+
+    for required in ["/categories", "/tags", "/announcements", "/users"] {
+        assert!(
+            routes.contains(&required),
+            "missing public sidebar destination route: {required}"
+        );
+    }
+
+    let home_source =
+        std::fs::read_to_string("src/pages/home.rs").expect("home page source should be readable");
+    for required in [
+        "href=\"/categories\"",
+        "href=\"/tags\"",
+        "href=\"/announcements\"",
+        "href=\"/users\"",
+    ] {
+        assert!(
+            home_source.contains(required),
+            "missing homepage sidebar link fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn public_index_pages_render_homepage_sidebar_data_sources() {
+    let app_source = std::fs::read_to_string("src/app.rs").expect("app source should be readable");
+    let pages_mod =
+        std::fs::read_to_string("src/pages/mod.rs").expect("pages mod source should be readable");
+    let public_indexes = std::fs::read_to_string("src/pages/public_indexes.rs")
+        .expect("public index pages source should be readable");
+    let component_source =
+        std::fs::read_to_string("src/components/mod.rs").expect("components source should exist");
+
+    for required in [
+        "AnnouncementsIndexPage",
+        "CategoriesIndexPage",
+        "TagsIndexPage",
+        "UsersIndexPage",
+        "<Route path=path!(\"categories\") view=CategoriesIndexPage/>",
+        "<Route path=path!(\"tags\") view=TagsIndexPage/>",
+        "<Route path=path!(\"announcements\") view=AnnouncementsIndexPage/>",
+        "<Route path=path!(\"users\") view=UsersIndexPage/>",
+    ] {
+        assert!(
+            app_source.contains(required),
+            "missing public index route fragment: {required}"
+        );
+    }
+    assert!(pages_mod.contains("pub mod public_indexes;"));
+    for required in [
+        "CategoriesIndexPage",
+        "TagsIndexPage",
+        "AnnouncementsIndexPage",
+        "UsersIndexPage",
+        "fallback_home_page",
+        "home.categories",
+        "home.hot_tags",
+        "home.announcements",
+        "home.active_authors",
+        "查看相关主题",
+    ] {
+        assert!(
+            public_indexes.contains(required),
+            "missing public index page fragment: {required}"
+        );
+    }
+    for required in ["href=\"/tags\"", "href=\"/users\""] {
+        assert!(
+            component_source.contains(required),
+            "missing top navigation public index link: {required}"
+        );
+    }
+}
+
+#[test]
+fn top_navigation_primary_tabs_have_real_public_routes() {
+    let routes = post::app::primary_routes();
+
+    for required in ["/posts", "/tags", "/users", "/docs", "/activities"] {
+        assert!(
+            routes.contains(&required),
+            "missing top navigation destination route: {required}"
+        );
+    }
+
+    let component_source =
+        std::fs::read_to_string("src/components/mod.rs").expect("components source should exist");
+    for required in [
+        "href=\"/posts\"",
+        "href=\"/tags\"",
+        "href=\"/users\"",
+        "href=\"/docs\"",
+        "href=\"/activities\"",
+    ] {
+        assert!(
+            component_source.contains(required),
+            "missing top navigation href: {required}"
+        );
+    }
+    assert!(
+        !component_source.contains("href=\"/?tab=posts\"")
+            && !component_source.contains("href=\"/?tab=docs\"")
+            && !component_source.contains("href=\"/?tab=events\""),
+        "top navigation must not use homepage query placeholders"
+    );
+}
+
+#[test]
+fn public_primary_pages_render_posts_docs_and_activities() {
+    let app_source = std::fs::read_to_string("src/app.rs").expect("app source should be readable");
+    let public_indexes = std::fs::read_to_string("src/pages/public_indexes.rs")
+        .expect("public index pages source should be readable");
+
+    for required in [
+        "PostsIndexPage",
+        "DocsIndexPage",
+        "ActivitiesIndexPage",
+        "<Route path=path!(\"posts\") view=PostsIndexPage/>",
+        "<Route path=path!(\"docs\") view=DocsIndexPage/>",
+        "<Route path=path!(\"activities\") view=ActivitiesIndexPage/>",
+    ] {
+        assert!(
+            app_source.contains(required) || public_indexes.contains(required),
+            "missing public primary page fragment: {required}"
+        );
+    }
+
+    for required in [
+        "home.topics",
+        "推荐帖子",
+        "Markdown 发帖指南",
+        "线上分享会",
+        "查看帖子详情",
+    ] {
+        assert!(
+            public_indexes.contains(required),
+            "missing public primary page content fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn api_routes_include_homepage_aggregate_endpoint() {
     let routes = post::app::api_route_inventory();
 
@@ -3632,6 +3959,270 @@ fn search_contract_supports_keyword_highlight_filter_and_sort() {
             .windows(2)
             .all(|pair| pair[0].score >= pair[1].score)
     );
+}
+
+#[test]
+fn search_contract_returns_tag_source_results_for_top_search() {
+    let store = post::state::ForumStore::seeded();
+
+    let results = store
+        .search(post::domain::search::SearchQuery {
+            q: "leptos".to_string(),
+            ..Default::default()
+        })
+        .expect("search leptos");
+
+    let tag = results
+        .items
+        .iter()
+        .find(|item| item.kind == post::domain::search::SearchResultKind::Tag)
+        .expect("top search should include tag source results");
+
+    assert_eq!(tag.id, "leptos");
+    assert_eq!(tag.title, "#leptos");
+    assert!(tag.title_highlighted.contains("<mark>leptos</mark>"));
+    assert!(tag.summary.contains("主题使用该标签"));
+    assert_eq!(tag.url, "/search?tag=leptos");
+}
+
+#[test]
+fn search_contract_returns_user_source_results_for_top_search() {
+    let store = post::state::ForumStore::seeded();
+
+    let results = store
+        .search(post::domain::search::SearchQuery {
+            q: "张晨".to_string(),
+            ..Default::default()
+        })
+        .expect("search user");
+
+    let user = results
+        .items
+        .iter()
+        .find(|item| item.kind == post::domain::search::SearchResultKind::User)
+        .expect("top search should include user source results");
+
+    assert_eq!(user.title, "张晨");
+    assert!(user.title_highlighted.contains("<mark>张晨</mark>"));
+    assert!(user.summary.contains("活跃作者"));
+    assert!(user.url.starts_with("/users/"));
+}
+
+#[test]
+fn search_page_renders_result_kind_from_search_result_source() {
+    let source =
+        std::fs::read_to_string("src/pages/search.rs").expect("search page source should exist");
+
+    for required in [
+        "SearchResultKind",
+        "result_kind_label",
+        "SearchResultKind::Post",
+        "SearchResultKind::Tag",
+        "SearchResultKind::User",
+        "<div class=\"result-kind\">{result_kind_label(item.kind)}</div>",
+    ] {
+        assert!(
+            source.contains(required),
+            "missing search result kind rendering fragment: {required}"
+        );
+    }
+    assert!(
+        !source.contains("<div class=\"result-kind\">\"帖子\"</div>"),
+        "search result kind must not be hardcoded to posts"
+    );
+}
+
+#[test]
+fn elasticsearch_search_repository_builds_prd_post_query_and_maps_hits() {
+    let query = post::domain::search::SearchQuery {
+        q: "sqlx".to_string(),
+        category: Some("教程".to_string()),
+        tag: Some("leptos".to_string()),
+        sort: post::domain::search::SearchSort::Hot,
+        page: 2,
+        page_size: 12,
+    };
+
+    let body = post::repositories::search::ElasticsearchSearchRepository::build_post_search_body(
+        &query.clone().normalized(),
+    );
+    let fields = body["query"]["bool"]["must"][0]["multi_match"]["fields"]
+        .as_array()
+        .expect("multi_match fields");
+    for expected in [
+        "title^4",
+        "summary^2",
+        "body",
+        "tags",
+        "category_name",
+        "author_name",
+    ] {
+        assert!(
+            fields.iter().any(|field| field.as_str() == Some(expected)),
+            "missing Elasticsearch field {expected}"
+        );
+    }
+    assert_eq!(
+        body["query"]["bool"]["must"][0]["multi_match"]["query"],
+        "sqlx"
+    );
+    assert_eq!(
+        body["query"]["bool"]["filter"][0]["term"]["category_name"],
+        "教程"
+    );
+    assert_eq!(body["query"]["bool"]["filter"][1]["term"]["tags"], "leptos");
+    assert!(body["highlight"]["fields"].get("title").is_some());
+    assert!(body["highlight"]["fields"].get("summary").is_some());
+    assert!(body["highlight"]["fields"].get("body").is_some());
+    assert!(
+        body["sort"]
+            .as_array()
+            .expect("sort array")
+            .iter()
+            .any(|sort| sort.get("_score").is_some() || sort.get("hot_score").is_some())
+    );
+
+    let response = serde_json::json!({
+        "hits": {
+            "total": { "value": 1 },
+            "hits": [{
+                "_id": "3bf1816e-3e45-4f14-9779-6f1f4d89f4e5",
+                "_score": 91.0,
+                "_source": {
+                    "title": "SQLx 宏查询",
+                    "summary": "PostgreSQL 查询实践",
+                    "category_name": "教程",
+                    "tags": ["sqlx", "postgresql"],
+                    "author_name": "张晨",
+                    "hot_score": 880
+                },
+                "highlight": {
+                    "title": ["<mark>SQLx</mark> 宏查询"],
+                    "summary": ["PostgreSQL 查询实践"]
+                }
+            }]
+        }
+    });
+    let page =
+        post::repositories::search::ElasticsearchSearchRepository::parse_post_search_response(
+            query.normalized(),
+            response,
+        )
+        .expect("parse Elasticsearch search response");
+
+    assert_eq!(page.total, 1);
+    assert_eq!(
+        page.items[0].kind,
+        post::domain::search::SearchResultKind::Post
+    );
+    assert_eq!(page.items[0].title_highlighted, "<mark>SQLx</mark> 宏查询");
+    assert_eq!(page.items[0].category_name.as_deref(), Some("教程"));
+    assert_eq!(page.items[0].author_name, "张晨");
+    assert_eq!(
+        page.items[0].url,
+        "/posts/3bf1816e-3e45-4f14-9779-6f1f4d89f4e5"
+    );
+}
+
+#[test]
+fn elasticsearch_search_repository_maps_tag_and_user_source_hits() {
+    let query = post::domain::search::SearchQuery {
+        q: "leptos".to_string(),
+        ..Default::default()
+    };
+
+    let body = post::repositories::search::ElasticsearchSearchRepository::build_post_search_body(
+        &query.clone().normalized(),
+    );
+    let fields = body["query"]["bool"]["must"][0]["multi_match"]["fields"]
+        .as_array()
+        .expect("multi_match fields");
+    for expected in ["title^4", "name^3", "nickname^3", "username^2", "bio"] {
+        assert!(
+            fields.iter().any(|field| field.as_str() == Some(expected)),
+            "missing Elasticsearch source field {expected}"
+        );
+    }
+
+    let response = serde_json::json!({
+        "hits": {
+            "total": { "value": 2 },
+            "hits": [
+                {
+                    "_id": "tag-leptos",
+                    "_score": 75.0,
+                    "_source": {
+                        "kind": "tag",
+                        "name": "leptos",
+                        "post_count": 132
+                    },
+                    "highlight": {
+                        "name": ["<mark>leptos</mark>"]
+                    }
+                },
+                {
+                    "_id": "42a75ffc-16dc-4522-a3cb-252644d75b22",
+                    "_score": 62.0,
+                    "_source": {
+                        "kind": "user",
+                        "nickname": "Leptos 张晨",
+                        "username": "zhangchen",
+                        "bio": "Leptos SSR 实践者",
+                        "post_count": 18,
+                        "comment_count": 96
+                    },
+                    "highlight": {
+                        "nickname": ["<mark>Leptos</mark> 张晨"]
+                    }
+                }
+            ]
+        }
+    });
+    let page =
+        post::repositories::search::ElasticsearchSearchRepository::parse_post_search_response(
+            query.normalized(),
+            response,
+        )
+        .expect("parse source hits");
+
+    assert_eq!(
+        page.items[0].kind,
+        post::domain::search::SearchResultKind::Tag
+    );
+    assert_eq!(page.items[0].title, "#leptos");
+    assert_eq!(page.items[0].title_highlighted, "#<mark>leptos</mark>");
+    assert_eq!(page.items[0].url, "/search?tag=leptos");
+    assert_eq!(
+        page.items[1].kind,
+        post::domain::search::SearchResultKind::User
+    );
+    assert_eq!(page.items[1].title_highlighted, "<mark>Leptos</mark> 张晨");
+    assert_eq!(
+        page.items[1].url,
+        "/users/42a75ffc-16dc-4522-a3cb-252644d75b22"
+    );
+}
+
+#[test]
+fn app_state_search_has_elasticsearch_runtime_backend_boundary() {
+    let state_source =
+        std::fs::read_to_string("src/state.rs").expect("state source should be readable");
+    let search_source = std::fs::read_to_string("src/repositories/search.rs")
+        .expect("search repository source should be readable");
+
+    for required in [
+        "ElasticsearchSearchRepository",
+        "SEARCH_BACKEND",
+        "elasticsearch_search_index",
+        "ELASTICSEARCH_SEARCH_INDEX",
+        "search_backend == \"elasticsearch\"",
+        "search_posts(query)",
+    ] {
+        assert!(
+            state_source.contains(required) || search_source.contains(required),
+            "missing Elasticsearch runtime search fragment: {required}"
+        );
+    }
 }
 
 #[test]
@@ -3875,6 +4466,73 @@ fn notification_push_service_builds_payload_only_for_online_recipients() {
 }
 
 #[test]
+fn notification_push_service_builds_websocket_json_payload_and_ack_message() {
+    let notification = post::domain::notifications::Notification {
+        notification_id: uuid::Uuid::from_u128(802),
+        recipient_id: uuid::Uuid::from_u128(803),
+        actor_id: Some(uuid::Uuid::from_u128(804)),
+        notification_type: post::domain::notifications::NotificationType::PostLiked,
+        title: "有人喜欢了你的帖子".to_string(),
+        body: "WebSocket 应推送完整 JSON payload".to_string(),
+        read_at: None,
+        created_at: time::OffsetDateTime::from_unix_timestamp(1_718_083_200)
+            .expect("fixed notification timestamp"),
+    };
+    let push_id = uuid::Uuid::from_u128(805);
+    let push = post::services::notifications::NotificationPushService::build_pending_push(
+        push_id,
+        1,
+        notification,
+    )
+    .expect("online user should receive pending push");
+
+    let payload = post::services::notifications::NotificationPushService::websocket_payload(&push)
+        .expect("websocket payload");
+    let json: serde_json::Value = serde_json::from_str(&payload).expect("payload json");
+    assert_eq!(json["type"], "notification");
+    assert_eq!(json["push_id"], push_id.to_string());
+    assert_eq!(json["notification_id"], push.notification_id.to_string());
+    assert_eq!(json["title"], push.title);
+    assert_eq!(json["body"], push.body);
+
+    let ack = serde_json::json!({
+        "type": "ack",
+        "push_id": push_id,
+    })
+    .to_string();
+    assert_eq!(
+        post::services::notifications::NotificationPushService::ack_message_to_push_id(&ack),
+        Some(push_id)
+    );
+    assert_eq!(
+        post::services::notifications::NotificationPushService::ack_message_to_push_id(
+            &push_id.to_string()
+        ),
+        Some(push_id)
+    );
+}
+
+#[test]
+fn notification_websocket_session_polls_pending_pushes_during_connection() {
+    let api_source = std::fs::read_to_string("src/api.rs").expect("api source should be readable");
+
+    for required in [
+        "tokio::time::interval",
+        "tokio::select!",
+        "pending_notification_pushes(user_id).await",
+        "NotificationPushService::websocket_payload",
+        "NotificationPushService::ack_message_to_push_id",
+        "ack_notification_push(user_id, push.push_id).await",
+        "socket.recv()",
+    ] {
+        assert!(
+            api_source.contains(required),
+            "missing WebSocket realtime push fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn admin_dashboard_requires_admin_and_exposes_rbac_menu() {
     let store = post::state::ForumStore::seeded();
     let admin = store.demo_user();
@@ -4090,11 +4748,13 @@ fn rustfs_object_store_adapter_contract_uses_s3_put_object() {
         "aws_credential_types::Credentials",
         "aws_sdk_s3::{Client, config::Region, primitives::ByteStream}",
         "Credentials::new",
-        "aws_sdk_s3::config::Builder::new()",
-        ".behavior_version_latest()",
+        "aws_config::defaults(aws_config::BehaviorVersion::latest())",
         ".region(Region::new(config.region))",
         ".credentials_provider(credentials)",
         ".endpoint_url(config.endpoint_url)",
+        ".load()",
+        ".await",
+        "aws_sdk_s3::config::Builder::from(&shared_config)",
         ".force_path_style(config.force_path_style)",
         "Client::from_conf(s3_config)",
         "async fn ensure_bucket",

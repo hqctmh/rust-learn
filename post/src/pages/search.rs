@@ -3,7 +3,7 @@ use leptos_router::{hooks::use_query_map, params::ParamsMap};
 
 use crate::{
     components::PageShell,
-    domain::search::{SearchQuery, SearchResultPage, SearchSort},
+    domain::search::{SearchQuery, SearchResultKind, SearchResultPage, SearchSort},
     page_data::{fallback_search_page, load_search_page},
 };
 
@@ -111,7 +111,7 @@ fn SearchResults(results: SearchResultPage) -> impl IntoView {
                     <div class="search-result-list">
                         {items.into_iter().map(|item| view! {
                             <a class="search-result-row" href=item.url>
-                                <div class="result-kind">"帖子"</div>
+                                <div class="result-kind">{result_kind_label(item.kind)}</div>
                                 <h2 inner_html=item.title_highlighted></h2>
                                 <p inner_html=item.summary_highlighted></p>
                                 <div class="result-meta">
@@ -125,6 +125,14 @@ fn SearchResults(results: SearchResultPage) -> impl IntoView {
                 </section>
             </div>
         </div>
+    }
+}
+
+fn result_kind_label(kind: SearchResultKind) -> &'static str {
+    match kind {
+        SearchResultKind::Post => "帖子",
+        SearchResultKind::Tag => "标签",
+        SearchResultKind::User => "用户",
     }
 }
 

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::home::{HomeTopic, dense_workbench_topics};
+use crate::domain::home::{
+    HomeActiveAuthor, HomeQuery, HomeTag, HomeTopic, dense_workbench_home, dense_workbench_topics,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SearchQuery {
@@ -102,6 +104,22 @@ pub fn search_dense_workbench(query: SearchQuery) -> SearchResultPage {
         .map(|topic| to_result_item(topic, &query.q))
         .collect::<Vec<_>>();
 
+    if query.category.is_none() && query.tag.is_none() {
+        let home = dense_workbench_home(HomeQuery::default(), true);
+        items.extend(
+            home.hot_tags
+                .into_iter()
+                .filter(|tag| matches_tag_query(tag, &needle))
+                .map(|tag| tag_to_result_item(tag, &query.q)),
+        );
+        items.extend(
+            home.active_authors
+                .into_iter()
+                .filter(|author| matches_author_query(author, &needle))
+                .map(|author| author_to_result_item(author, &query.q)),
+        );
+    }
+
     sort_results(&mut items, query.sort);
 
     let total = items.len();
@@ -153,6 +171,14 @@ fn matches_query(topic: &HomeTopic, needle: &str) -> bool {
     haystack.contains(needle)
 }
 
+fn matches_tag_query(tag: &HomeTag, needle: &str) -> bool {
+    needle.is_empty() || tag.name.to_lowercase().contains(needle)
+}
+
+fn matches_author_query(author: &HomeActiveAuthor, needle: &str) -> bool {
+    needle.is_empty() || author.name.to_lowercase().contains(needle)
+}
+
 fn to_result_item(topic: HomeTopic, query: &str) -> SearchResultItem {
     SearchResultItem {
         id: topic.id.clone(),
@@ -166,6 +192,75 @@ fn to_result_item(topic: HomeTopic, query: &str) -> SearchResultItem {
         author_name: topic.last_reply.author,
         score: topic.hot_score,
         url: format!("/posts/{}", topic.id),
+    }
+}
+
+fn tag_to_result_item(tag: HomeTag, query: &str) -> SearchResultItem {
+    let title = format!("#{}", tag.name);
+    SearchResultItem {
+        id: tag.name.clone(),
+        kind: SearchResultKind::Tag,
+        title_highlighted: highlight(&title, query),
+        summary_highlighted: highlight(&format!("{} 个主题使用该标签", tag.count), query),
+        title,
+        summary: format!("{} 个主题使用该标签", tag.count),
+        category_name: None,
+        tags: vec![tag.name.clone()],
+        author_name: "标签".to_string(),
+        score: i64::from(tag.count),
+        url: format!("/search?tag={}", tag.name),
+    }
+}
+
+fn author_to_result_item(author: HomeActiveAuthor, query: &str) -> SearchResultItem {
+    let user_id = user_search_id(&author.name);
+    let summary = format!("活跃作者，{}", author.reply_count_label);
+    let score = author_score(&author.reply_count_label);
+    SearchResultItem {
+        id: user_id.clone(),
+        kind: SearchResultKind::User,
+        title_highlighted: highlight(&author.name, query),
+        summary_highlighted: highlight(&summary, query),
+        title: author.name,
+        summary,
+        category_name: None,
+        tags: Vec::new(),
+        author_name: "用户".to_string(),
+        score,
+        url: format!("/users/{user_id}"),
+    }
+}
+
+fn user_search_id(name: &str) -> String {
+    let ascii = name
+        .chars()
+        .filter(|value| value.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_lowercase();
+    if !ascii.is_empty() {
+        return ascii;
+    }
+
+    let encoded = name
+        .chars()
+        .map(|value| format!("{:x}", value as u32))
+        .collect::<Vec<_>>()
+        .join("-");
+    format!("u-{encoded}")
+}
+
+fn author_score(reply_count_label: &str) -> i64 {
+    let number = reply_count_label
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('k')
+        .parse::<f64>()
+        .unwrap_or_default();
+    if reply_count_label.contains('k') {
+        (number * 1000.0) as i64
+    } else {
+        number as i64
     }
 }
 

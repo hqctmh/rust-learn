@@ -11,11 +11,11 @@ pub fn TopNav() -> impl IntoView {
                 </a>
                 <nav class="top-tabs hidden gap-1 lg:flex">
                     <a class="top-tab active" href="/">"首页"</a>
-                    <a class="top-tab" href="/?tab=posts">"帖子"</a>
-                    <a class="top-tab" href="/?tab=tags">"标签"</a>
-                    <a class="top-tab" href="/users/sample">"用户"</a>
-                    <a class="top-tab" href="/?tab=docs">"文档"</a>
-                    <a class="top-tab" href="/?tab=events">"活动"</a>
+                    <a class="top-tab" href="/posts">"帖子"</a>
+                    <a class="top-tab" href="/tags">"标签"</a>
+                    <a class="top-tab" href="/users">"用户"</a>
+                    <a class="top-tab" href="/docs">"文档"</a>
+                    <a class="top-tab" href="/activities">"活动"</a>
                 </nav>
                 <form class="search-pill ml-auto hidden min-w-0 w-full max-w-md items-center gap-2 md:flex" action="/search" method="get">
                     <span class="icon-text" aria-hidden="true">"⌕"</span>

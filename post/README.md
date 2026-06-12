@@ -41,6 +41,21 @@ cp .env.example .env
 postgres://post:post@localhost:5433/post
 ```
 
+可选运行时开关：
+
+```bash
+SEARCH_BACKEND=postgres
+ELASTICSEARCH_SEARCH_INDEX=posts
+HOME_SIDEBAR_CACHE_ENABLED=false
+HOME_SIDEBAR_CACHE_TTL_SECONDS=60
+```
+
+通知 WebSocket：
+
+- 服务端路由：`/ws/notifications/{user_id}`
+- 服务端推送 JSON：`{"type":"notification","push_id":"...","notification_id":"...","title":"...","body":"..."}`
+- 客户端确认 JSON：`{"type":"ack","push_id":"..."}`
+
 ## 运行
 
 安装 Leptos 相关工具后运行：
@@ -96,4 +111,4 @@ sqlx migrate run
 
 ## 当前阶段边界
 
-第一阶段先保证论坛页面、核心领域模型、JSON API 和本地依赖环境可运行。Redis、NATS、RustFS、Elasticsearch 已进入 Docker Compose；真实 PostgreSQL 仓储、缓存、事件消费、对象存储上传和全文索引在后续阶段接入。
+第一阶段先保证论坛页面、核心领域模型、JSON API 和本地依赖环境可运行。Redis、NATS、RustFS、Elasticsearch 已进入 Docker Compose；PostgreSQL 仓储、RustFS 对象写入、集成 outbox 和 Elasticsearch 搜索仓储边界已接入。默认搜索后端仍是 PostgreSQL，本地或集成环境可通过 `SEARCH_BACKEND=elasticsearch` 和 `ELASTICSEARCH_SEARCH_INDEX=posts` 切换到 Elasticsearch。

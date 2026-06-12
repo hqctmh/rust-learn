@@ -1,4 +1,8 @@
-use crate::domain::home::{HomeActiveAuthor, HomeAnnouncement, HomeCategory, HomeTag};
+use serde::{Deserialize, Serialize};
+
+use crate::domain::home::{
+    HomeActiveAuthor, HomeAnnouncement, HomeCategory, HomePageData, HomeTag,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
 pub struct HomeCategoryRow {
@@ -61,6 +65,99 @@ impl From<HomeActiveAuthorRow> for HomeActiveAuthor {
             avatar_label: row.avatar_label,
             reply_count_label: row.reply_count_label,
         }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HomeSidebarSnapshot {
+    pub categories: Vec<HomeCategory>,
+    pub hot_tags: Vec<HomeTag>,
+    pub announcements: Vec<HomeAnnouncement>,
+    pub active_authors: Vec<HomeActiveAuthor>,
+}
+
+impl HomeSidebarSnapshot {
+    pub fn from_home(home: &HomePageData) -> Self {
+        Self {
+            categories: home.categories.clone(),
+            hot_tags: home.hot_tags.clone(),
+            announcements: home.announcements.clone(),
+            active_authors: home.active_authors.clone(),
+        }
+    }
+
+    pub fn apply_to_home(self, home: &mut HomePageData) {
+        home.categories = self.categories;
+        home.hot_tags = self.hot_tags;
+        home.announcements = self.announcements;
+        home.active_authors = self.active_authors;
+    }
+
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    pub fn from_json(payload: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(payload)
+    }
+}
+
+pub struct RedisHomeCacheRepository {
+    client: redis::Client,
+    ttl_seconds: usize,
+}
+
+impl RedisHomeCacheRepository {
+    pub fn from_url(redis_url: &str, ttl_seconds: usize) -> Result<Self, String> {
+        let client = redis::Client::open(redis_url)
+            .map_err(|error| format!("Redis 首页缓存客户端初始化失败: {error}"))?;
+        Ok(Self {
+            client,
+            ttl_seconds,
+        })
+    }
+
+    pub const fn sidebar_cache_key() -> &'static str {
+        "home:sidebar:v1"
+    }
+
+    pub async fn try_read_sidebar(&self) -> Result<Option<HomeSidebarSnapshot>, String> {
+        let mut connection = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|error| format!("Redis 首页缓存连接失败: {error}"))?;
+        let payload: Option<String> = redis::cmd("GET")
+            .arg(Self::sidebar_cache_key())
+            .query_async(&mut connection)
+            .await
+            .map_err(|error| format!("Redis 首页缓存读取失败: {error}"))?;
+        payload
+            .map(|payload| {
+                HomeSidebarSnapshot::from_json(&payload)
+                    .map_err(|error| format!("Redis 首页缓存解析失败: {error}"))
+            })
+            .transpose()
+    }
+
+    pub async fn write_sidebar(&self, snapshot: &HomeSidebarSnapshot) -> Result<(), String> {
+        let payload = snapshot
+            .to_json()
+            .map_err(|error| format!("Redis 首页缓存序列化失败: {error}"))?;
+        let mut connection = self
+            .client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|error| format!("Redis 首页缓存连接失败: {error}"))?;
+        let _: String = redis::cmd("SET")
+            .arg(Self::sidebar_cache_key())
+            .arg(payload)
+            .arg("EX")
+            .arg(self.ttl_seconds)
+            .query_async(&mut connection)
+            .await
+            .map_err(|error| format!("Redis 首页缓存写入失败: {error}"))?;
+        Ok(())
     }
 }
 

@@ -4,6 +4,7 @@ pub mod home;
 pub mod login;
 pub mod notifications;
 pub mod post_detail;
+pub mod public_indexes;
 pub mod register;
 pub mod search;
 pub mod user_space;

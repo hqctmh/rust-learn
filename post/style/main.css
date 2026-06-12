@@ -1417,6 +1417,99 @@ pre {
   color: var(--muted);
 }
 
+.public-index-page {
+  display: grid;
+  gap: 18px;
+}
+
+.public-index-header {
+  align-items: center;
+  background: var(--base-100);
+  border: 1px solid var(--base-300);
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.04);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px;
+}
+
+.public-index-header h1 {
+  font-size: 30px;
+  margin: 4px 0;
+}
+
+.public-index-header p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.public-index-grid,
+.public-index-list {
+  display: grid;
+  gap: 10px;
+}
+
+.public-index-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.public-index-grid.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.public-index-item {
+  align-items: center;
+  background: var(--base-100);
+  border: 1px solid var(--base-300);
+  border-radius: 10px;
+  color: inherit;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 16px;
+  text-decoration: none;
+}
+
+.public-index-item span {
+  align-items: center;
+  display: flex;
+  font-weight: 800;
+  gap: 8px;
+  min-width: 0;
+}
+
+.public-index-item strong {
+  color: var(--ink);
+}
+
+.public-index-item em {
+  color: var(--primary);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
+  grid-column: 1 / -1;
+}
+
+.public-index-item p,
+.public-index-item small,
+.public-index-item .tag-list {
+  grid-column: 1 / -1;
+}
+
+.public-index-item p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.public-index-item small {
+  color: var(--muted);
+}
+
+.public-index-item.author span {
+  gap: 10px;
+}
+
 @media (min-width: 768px) {
   .md\:flex { display: flex; }
 }
@@ -1436,6 +1529,11 @@ pre {
   .user-space-grid,
   .user-stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .public-index-grid,
+  .public-index-grid.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .topic-head {
@@ -1484,6 +1582,11 @@ pre {
     flex-direction: column;
   }
 
+  .public-index-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .notification-row {
     grid-template-columns: 10px minmax(0, 1fr);
   }
@@ -1507,7 +1610,9 @@ pre {
   .editor-meta-grid,
   .stat-grid,
   .system-grid,
-  .tag-grid {
+  .tag-grid,
+  .public-index-grid,
+  .public-index-grid.compact {
     grid-template-columns: 1fr;
   }
 

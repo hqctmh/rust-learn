@@ -501,6 +501,102 @@ Observed:
 - `cargo check --manifest-path post/Cargo.toml`: PASS.
 - `cargo leptos build`: PASS.
 
+---
+
+### Task 6: Live External-Service E2E Test Entry for Redis, NATS, and Elasticsearch
+
+**Task Status:** Completed as a runnable ignored test and script on 2026-06-12. Live execution is pending Docker image availability.
+
+**Files:**
+- Modify: `post/Cargo.toml`
+- Modify: `post/Cargo.lock`
+- Modify: `post/tests/phase1_contract.rs`
+- Create: `post/tests/integration_live.rs`
+- Create: `post/scripts/run-integration-live.sh`
+
+- [x] **Step 1: Write the failing contract test**
+
+Added `integration_outbox_live_e2e_test_is_available_for_external_services` to `post/tests/phase1_contract.rs`. It asserts:
+
+- `tests/integration_live.rs` exists.
+- The live test is `#[ignore]`.
+- The live test seeds Redis with `SET` and verifies deletion with `EXISTS`.
+- The live test subscribes to NATS and waits for a published message.
+- The live test inserts outbox rows through `PostgresIntegrationRepository::insert_actions`.
+- The live test drains rows with `IntegrationOutboxWorker` and `RuntimeIntegrationHandler`.
+- The live test searches Elasticsearch with `SearchParts::Index`.
+- The live test includes delete cleanup with `DeleteParts::IndexId`.
+- `scripts/run-integration-live.sh` starts required Docker Compose services and runs the ignored test.
+
+- [x] **Step 2: Run test to verify it fails**
+
+Run:
+
+```bash
+cargo test --manifest-path post/Cargo.toml integration_outbox_live_e2e_test_is_available_for_external_services
+```
+
+Observed:
+
+- Initial run failed before reaching the new contract because SQLx macros could not connect to PostgreSQL while Docker/OrbStack was down.
+- `orb start` failed in sandbox with `chmod /Users/mah2/.orbstack/run: operation not permitted`.
+- Retried `orb start` outside sandbox; it timed out, but `orb status` later reported `Running` and Docker API recovered.
+- Postgres and RustFS containers came back healthy.
+
+- [x] **Step 3: Attempt to start external services**
+
+Run:
+
+```bash
+docker compose -f post/docker-compose.yml up -d redis nats elasticsearch
+```
+
+Observed:
+
+- Both sandboxed and non-sandboxed attempts failed while pulling images.
+- Docker registry DNS inside the VM timed out:
+  `lookup registry-1.docker.io on 0.250.250.200:53: i/o timeout`.
+
+- [x] **Step 4: Add live e2e test and script**
+
+Added `post/tests/integration_live.rs`:
+
+- Connects to PostgreSQL, Redis, NATS, and Elasticsearch.
+- Seeds a Redis key and verifies the handler deletes it.
+- Subscribes to a unique NATS subject and verifies the handler publishes a message.
+- Inserts a search upsert outbox row and verifies the document becomes searchable in Elasticsearch.
+- Inserts a search delete row and drains it for cleanup.
+- Is marked `#[ignore]` so default test runs are not blocked by Docker services.
+
+Added `post/scripts/run-integration-live.sh`:
+
+- Starts `postgres`, `redis`, `nats`, and `elasticsearch`.
+- Waits for Docker health checks.
+- Applies the integration outbox migration.
+- Runs `cargo test --test integration_live -- --ignored --nocapture`.
+
+- [x] **Step 5: Run targeted and default verification**
+
+Run:
+
+```bash
+cargo test --manifest-path post/Cargo.toml integration_outbox_live_e2e_test_is_available_for_external_services
+cargo test --manifest-path post/Cargo.toml integration_outbox_worker_processes_successes_and_records_retriable_failures
+cargo test --manifest-path post/Cargo.toml
+cargo check --manifest-path post/Cargo.toml
+cargo leptos build
+```
+
+Observed:
+
+- `cargo test --manifest-path post/Cargo.toml integration_outbox_live_e2e_test_is_available_for_external_services`: PASS, 1 passed.
+- `cargo test --manifest-path post/Cargo.toml integration_outbox_worker_processes_successes_and_records_retriable_failures`: PASS, 1 passed.
+- `cargo test --manifest-path post/Cargo.toml`: PASS, 110 passed, 1 ignored.
+- `cargo check --manifest-path post/Cargo.toml`: PASS.
+- `cargo leptos build`: PASS.
+
+Live ignored test was not executed because Redis/NATS/Elasticsearch images could not be pulled in the current Docker environment.
+
 ## Self-Review
 
 - Covers PRD requirements that content changes trigger cache invalidation or asynchronous refresh.
@@ -510,4 +606,5 @@ Observed:
 - Adds a reusable outbox drain worker with success and failure retry state.
 - Adds a concrete Redis/NATS/Elasticsearch runtime handler behind the outbox worker boundary.
 - Adds optional SSR startup scheduling for the outbox worker.
-- Leaves deeper Redis/NATS/Elasticsearch end-to-end external-service assertions as a follow-up slice.
+- Adds a live Redis/NATS/Elasticsearch ignored e2e test and script for external-service verification.
+- Leaves actual live e2e execution pending until Docker registry DNS/image pulls are available.
