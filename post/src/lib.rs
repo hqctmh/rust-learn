@@ -4,6 +4,9 @@ pub mod app;
 pub mod components;
 pub mod domain;
 pub mod error;
+#[cfg(feature = "ssr")]
+pub mod object_store;
+pub mod page_data;
 pub mod pages;
 #[cfg(feature = "ssr")]
 pub mod repositories;

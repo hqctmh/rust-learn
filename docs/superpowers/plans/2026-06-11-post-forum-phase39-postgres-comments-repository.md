@@ -12,6 +12,8 @@
 
 ### Task 1: Comments Repository
 
+**Task Status:** Completed and verified on 2026-06-12.
+
 **Files:**
 - Modify: `post/tests/phase1_contract.rs`
 - Create: `post/src/repositories/comments.rs`
@@ -60,11 +62,10 @@ cargo leptos build
 
 Expected: all commands pass.
 
-**Current verification evidence (2026-06-11):**
-- Status: Completed and re-verified on 2026-06-11.
-- `cargo test --manifest-path post/Cargo.toml sqlx_comment_repository_contract_maps_comment_tree_rows`: PASS, 1 passed, 82 filtered out.
-- `cargo test --manifest-path post/Cargo.toml sqlx_comment_repository_contract_maps_comment_tree_rows`: PASS, 1 passed.
+**Current verification evidence (2026-06-12):**
+- Status: Completed and re-verified on 2026-06-12.
+- `cargo test --manifest-path post/Cargo.toml sqlx_comment_repository_contract_maps_comment_tree_rows`: PASS, 1 passed, 98 filtered out.
 - `cargo fmt --manifest-path post/Cargo.toml`: PASS.
-- `cargo test --manifest-path post/Cargo.toml`: PASS, 79 passed.
+- `cargo test --manifest-path post/Cargo.toml`: PASS, 99 passed.
 - `cargo check --manifest-path post/Cargo.toml`: PASS.
 - `cargo leptos build`: PASS.

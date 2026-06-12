@@ -10,6 +10,168 @@ fn app_shell_contract_lists_primary_routes() {
 }
 
 #[test]
+fn homepage_component_loads_data_through_server_state() {
+    let home_page = std::fs::read_to_string("src/pages/home.rs").expect("read home page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    assert!(
+        home_page.contains("load_home_page"),
+        "home page should load data through a server function backed by AppState"
+    );
+    assert!(
+        !home_page.contains("dense_workbench_home("),
+        "home page must not render the design mock directly"
+    );
+    assert!(
+        page_data.contains("expect_context::<AppState>()"),
+        "page data server functions should consume the AppState provided by the Axum/Leptos integration"
+    );
+    assert!(
+        page_data.contains(".home_page("),
+        "home page server function should delegate to AppState::home_page"
+    );
+}
+
+#[test]
+fn primary_ssr_pages_load_operational_data_through_server_state() {
+    let pages = [
+        (
+            "src/pages/search.rs",
+            "load_search_page",
+            "search_dense_workbench(",
+        ),
+        (
+            "src/pages/admin.rs",
+            "load_admin_dashboard",
+            "admin_dashboard_demo(",
+        ),
+        (
+            "src/pages/notifications.rs",
+            "load_notifications_page",
+            "notification_demo_center(",
+        ),
+    ];
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    for (path, loader, forbidden_mock) in pages {
+        let source = std::fs::read_to_string(path).expect("read page source");
+        assert!(
+            source.contains(loader),
+            "{path} should load data through {loader}"
+        );
+        assert!(
+            !source.contains(forbidden_mock),
+            "{path} must not render the design mock directly"
+        );
+    }
+
+    assert!(page_data.contains(".search("));
+    assert!(page_data.contains(".admin_dashboard("));
+    assert!(page_data.contains(".notification_center("));
+}
+
+#[test]
+fn search_page_preserves_url_query_parameters() {
+    let source = std::fs::read_to_string("src/pages/search.rs").expect("read search page source");
+
+    assert!(
+        source.contains("use_query_map"),
+        "search page should read query parameters from the router"
+    );
+    assert!(
+        source.contains("search_query_from_params"),
+        "search page should convert URL params into SearchQuery"
+    );
+    assert!(
+        !source.contains("q: \"sqlx\".to_string()"),
+        "search page must not hardcode the search keyword"
+    );
+    assert!(
+        !source.contains("href=\"/search?q=sqlx"),
+        "search filter links must preserve the current keyword instead of hardcoding sqlx"
+    );
+}
+
+#[test]
+fn home_page_preserves_url_query_parameters_for_filters_and_pagination() {
+    let source = std::fs::read_to_string("src/pages/home.rs").expect("read home page source");
+
+    assert!(
+        source.contains("use_query_map"),
+        "home page should read query parameters from the router"
+    );
+    assert!(
+        source.contains("home_query_from_params"),
+        "home page should convert URL params into HomeQuery"
+    );
+    assert!(
+        source.contains("home_href"),
+        "home page filter and pager links should preserve query state"
+    );
+    assert!(
+        !source.contains("Resource::new(|| HomeQuery::default()"),
+        "home page must not load only the default query"
+    );
+    assert!(
+        !source.contains("href=\"/\""),
+        "home page tabs, filters, and pager should not reset all query parameters"
+    );
+}
+
+#[test]
+fn post_detail_page_loads_route_post_and_comments_through_server_state() {
+    let source =
+        std::fs::read_to_string("src/pages/post_detail.rs").expect("read post detail page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    assert!(
+        source.contains("use_params_map"),
+        "post detail page should read the /posts/:id route parameter"
+    );
+    assert!(
+        source.contains("load_post_detail_page"),
+        "post detail page should load data through a server function"
+    );
+    assert!(
+        !source.contains("Leptos + Axum 构建全栈论坛的项目结构"),
+        "post detail page must not hardcode the article title"
+    );
+    assert!(
+        !source.contains("CommentItem author=\"hello-rust\""),
+        "post detail page must not hardcode comments"
+    );
+    assert!(page_data.contains("PostDetailPageData"));
+    assert!(page_data.contains(".post_detail("));
+    assert!(page_data.contains(".comments_for_post("));
+}
+
+#[test]
+fn user_space_pages_load_route_user_through_server_state() {
+    let source =
+        std::fs::read_to_string("src/pages/user_space.rs").expect("read user space page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    assert!(
+        source.contains("use_params_map"),
+        "user profile page should read the /users/:id route parameter"
+    );
+    assert!(
+        source.contains("load_user_space_page"),
+        "user space pages should load data through a server function"
+    );
+    assert!(
+        !source.contains("demo_profile("),
+        "user space pages must not render demo profile data"
+    );
+    assert!(
+        !source.contains("demo_posts("),
+        "user space pages must not render demo post data"
+    );
+    assert!(page_data.contains("load_user_space_page"));
+    assert!(page_data.contains(".user_space("));
+}
+
+#[test]
 fn auth_contract_supports_register_current_session_and_logout() {
     let store = post::state::ForumStore::seeded();
     let session = store
@@ -287,6 +449,46 @@ fn author_post_routes_are_registered() {
     assert!(routes.contains(&"/api/posts/drafts/autosave"));
     assert!(routes.contains(&"/api/posts/{post_id}/update"));
     assert!(routes.contains(&"/api/posts/{post_id}/delete"));
+}
+
+#[test]
+fn protected_api_handlers_require_explicit_actor_identity() {
+    let api = include_str!("../src/api.rs");
+
+    assert!(
+        api.contains("fn require_user_id"),
+        "protected API handlers must share an explicit actor identity guard"
+    );
+    assert!(
+        api.contains("ForumError::Unauthorized"),
+        "missing Unauthorized mapping for protected API identity failures"
+    );
+    assert!(
+        !api.contains("demo_user()"),
+        "API handlers must not silently impersonate the demo user for protected actions"
+    );
+}
+
+#[test]
+fn protected_api_handlers_resolve_actor_from_session_id() {
+    let api = include_str!("../src/api.rs");
+
+    assert!(
+        api.contains("session_id: Option<Uuid>"),
+        "protected API identity params should accept session_id"
+    );
+    assert!(
+        api.contains("async fn require_actor_id"),
+        "protected API handlers should share async session-aware actor resolution"
+    );
+    assert!(
+        api.contains(".current_session(session_id).await"),
+        "session_id must be verified through AppState::current_session before resolving actor"
+    );
+    assert!(
+        api.contains("require_actor_id(&state"),
+        "protected API handlers should call the session-aware actor guard"
+    );
 }
 
 #[test]
@@ -724,6 +926,7 @@ fn sqlx_repository_execution_uses_checked_macros() {
             "comments.rs",
             include_str!("../src/repositories/comments.rs"),
         ),
+        ("files.rs", include_str!("../src/repositories/files.rs")),
         ("home.rs", include_str!("../src/repositories/home.rs")),
         ("reports.rs", include_str!("../src/repositories/reports.rs")),
         (
@@ -2378,6 +2581,206 @@ async fn app_state_search_reads_postgres_posts_with_filters_and_highlights() {
 }
 
 #[tokio::test]
+async fn app_state_file_upload_persists_to_postgres_and_deduplicates_hash() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let session = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("file-uploader-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("上传用户{suffix}"),
+        })
+        .await
+        .expect("register postgres uploader");
+    let request = post::domain::files::FileUploadRequest {
+        original_filename: format!("cover {suffix}.png"),
+        file_size: 128_000,
+        mime_type: "image/png".to_string(),
+        content_hash: format!("sha256-file-{suffix}"),
+        usage: post::domain::files::FileUsage::MarkdownImage,
+    };
+
+    let asset = state
+        .upload_file(session.user.user_id, request.clone())
+        .await
+        .expect("upload postgres file");
+    assert_eq!(asset.bucket, "post-assets");
+    assert!(asset.storage_key.ends_with(&format!("/cover-{suffix}.png")));
+    assert_eq!(asset.public_url, format!("/uploads/{}", asset.storage_key));
+    assert_eq!(
+        asset.markdown_image,
+        format!("![cover-{suffix}.png]({})", asset.public_url)
+    );
+
+    let duplicate = state
+        .upload_file(session.user.user_id, request)
+        .await
+        .expect("deduplicate postgres file");
+    assert_eq!(duplicate.file_id, asset.file_id);
+    assert_eq!(duplicate.file_hash, asset.file_hash);
+
+    let invalid = state
+        .upload_file(
+            session.user.user_id,
+            post::domain::files::FileUploadRequest {
+                original_filename: "shell.svg".to_string(),
+                file_size: 100,
+                mime_type: "image/svg+xml".to_string(),
+                content_hash: format!("sha256-svg-{suffix}"),
+                usage: post::domain::files::FileUsage::MarkdownImage,
+            },
+        )
+        .await;
+    assert!(invalid.is_err());
+}
+
+#[tokio::test]
+async fn app_state_admin_dashboard_aggregates_postgres_runtime_data() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool.clone()),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let admin = post::repositories::auth::PostgresAuthRepository::insert_user(
+        &pool,
+        uuid::Uuid::new_v4(),
+        &format!("dashboard-admin-{suffix}"),
+        "password",
+        &format!("仪表盘管理员{suffix}"),
+        None,
+        true,
+    )
+    .await
+    .expect("insert postgres dashboard admin")
+    .session_user();
+    let member = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("dashboard-member-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("仪表盘成员{suffix}"),
+        })
+        .await
+        .expect("register dashboard member")
+        .user;
+    let post = state
+        .create_post(
+            member.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("仪表盘统计帖子 {suffix}"),
+                markdown: "用于验证后台 dashboard 从 PostgreSQL 聚合。".to_string(),
+                summary: "后台 dashboard 统计".to_string(),
+                category_name: Some("教程".to_string()),
+                tag_names: vec![format!("dashboard-{suffix}")],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create dashboard post");
+    state
+        .add_comment(
+            admin.user_id,
+            post::domain::comments::CreateCommentRequest {
+                post_id: post.summary.post_id,
+                parent_comment_id: None,
+                content: format!("dashboard-comment-{suffix}"),
+            },
+        )
+        .await
+        .expect("create dashboard comment");
+
+    assert!(state.admin_dashboard(member.user_id).await.is_err());
+    let dashboard = state
+        .admin_dashboard(admin.user_id)
+        .await
+        .expect("postgres admin dashboard");
+
+    assert!(dashboard.stats.iter().any(|stat| stat.label == "用户总数"));
+    assert!(dashboard.stats.iter().any(|stat| stat.label == "帖子总数"));
+    assert!(
+        dashboard
+            .users
+            .iter()
+            .any(|user| user.username == member.username && user.status == "正常")
+    );
+    assert!(
+        dashboard
+            .moderation_posts
+            .iter()
+            .any(|item| item.title == post.summary.title && item.author == member.nickname)
+    );
+    assert!(dashboard.moderation_comments.iter().any(|comment| {
+        comment.post_title == post.summary.title
+            && comment.content == format!("dashboard-comment-{suffix}")
+    }));
+    assert!(dashboard.menu.iter().any(|item| item.label == "系统统计"));
+    assert!(
+        dashboard
+            .permissions
+            .iter()
+            .any(|permission| permission.code == "audit:view")
+    );
+}
+
+#[tokio::test]
+async fn app_state_notification_socket_state_accepts_postgres_users() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let session = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("socket-user-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("Socket用户{suffix}"),
+        })
+        .await
+        .expect("register postgres socket user");
+
+    let connected = state
+        .connect_notification_socket(session.user.user_id)
+        .await
+        .expect("connect postgres socket user");
+    assert_eq!(connected.user_id, session.user.user_id);
+    assert_eq!(connected.online_connections, 1);
+
+    let stats = state
+        .notification_connection_stats(session.user.user_id)
+        .await
+        .expect("postgres socket stats");
+    assert_eq!(stats.online_connections, 1);
+    assert_eq!(stats.pending_push_count, 0);
+    assert!(
+        state
+            .pending_notification_pushes(session.user.user_id)
+            .await
+            .expect("pending postgres socket pushes")
+            .is_empty()
+    );
+
+    let disconnected = state
+        .disconnect_notification_socket(session.user.user_id)
+        .await
+        .expect("disconnect postgres socket user");
+    assert_eq!(disconnected.online_connections, 0);
+}
+
+#[tokio::test]
 async fn app_state_post_reactions_persist_to_postgres_and_update_counts() {
     let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
         .await
@@ -3243,12 +3646,167 @@ fn file_upload_contract_validates_image_metadata_and_markdown_url() {
 }
 
 #[test]
+fn file_binary_upload_builds_server_side_hash_and_markdown_asset() {
+    let store = post::state::ForumStore::seeded();
+    let user = store.demo_user();
+    let upload = post::domain::files::FileBinaryUploadRequest {
+        original_filename: "cover binary.png".to_string(),
+        mime_type: "image/png".to_string(),
+        content_base64: "iVBORw0KGgo=".to_string(),
+        usage: post::domain::files::FileUsage::MarkdownImage,
+    };
+
+    let metadata = upload.to_upload_request().expect("binary metadata");
+    assert_eq!(metadata.original_filename, "cover binary.png");
+    assert_eq!(metadata.file_size, 8);
+    assert_eq!(metadata.mime_type, "image/png");
+    assert_eq!(
+        metadata.content_hash,
+        "4c4b6a3be1314ab86138bef4314dde022e600960d8689a2c8f8631802d20dab6"
+    );
+
+    let asset = store
+        .upload_binary_file(user.user_id, upload)
+        .expect("binary image upload");
+    assert_eq!(asset.file_hash, metadata.content_hash);
+    assert!(asset.storage_key.ends_with("/cover-binary.png"));
+    assert_eq!(
+        asset.markdown_image,
+        format!("![cover-binary.png]({})", asset.public_url)
+    );
+
+    let invalid_base64 = post::domain::files::FileBinaryUploadRequest {
+        original_filename: "broken.png".to_string(),
+        mime_type: "image/png".to_string(),
+        content_base64: "not-base64".to_string(),
+        usage: post::domain::files::FileUsage::MarkdownImage,
+    };
+    assert!(invalid_base64.to_upload_request().is_err());
+}
+
+#[test]
+fn file_binary_upload_exposes_object_store_payload() {
+    let upload = post::domain::files::FileBinaryUploadRequest {
+        original_filename: "cover object.webp".to_string(),
+        mime_type: "image/webp".to_string(),
+        content_base64: "UklGRg==".to_string(),
+        usage: post::domain::files::FileUsage::CoverImage,
+    };
+
+    let object = upload.to_object_upload().expect("object payload");
+    assert_eq!(object.bytes, b"RIFF");
+    assert_eq!(object.asset.file_size, 4);
+    assert_eq!(object.asset.mime_type, "image/webp");
+    assert_eq!(
+        object.asset.content_hash,
+        "a40ff3d5900fb7698b8c865041347cb49eccedc8f93945f89629ad104aaecce4"
+    );
+    assert_eq!(object.bucket, "post-assets");
+    assert!(object.storage_key.ends_with("/cover-object.webp"));
+    assert_eq!(object.content_type, "image/webp");
+}
+
+#[test]
+fn rustfs_object_store_adapter_contract_uses_s3_put_object() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = std::fs::read_to_string(manifest_dir.join("src/object_store.rs"))
+        .expect("RustFS object store adapter should exist");
+
+    for required in [
+        "aws_credential_types::Credentials",
+        "aws_sdk_s3::{Client, config::Region, primitives::ByteStream}",
+        "Credentials::new",
+        "aws_sdk_s3::config::Builder::new()",
+        ".behavior_version_latest()",
+        ".region(Region::new(config.region))",
+        ".credentials_provider(credentials)",
+        ".endpoint_url(config.endpoint_url)",
+        ".force_path_style(config.force_path_style)",
+        "Client::from_conf(s3_config)",
+        "async fn ensure_bucket",
+        ".head_bucket()",
+        ".create_bucket()",
+        "self.ensure_bucket().await?",
+        ".put_object()",
+        ".bucket(self.bucket.as_str())",
+        ".key(object.storage_key)",
+        ".content_type(object.content_type)",
+        ".body(ByteStream::from(object.bytes))",
+        ".send()",
+    ] {
+        assert!(
+            source.contains(required),
+            "missing RustFS adapter fragment: {required}"
+        );
+    }
+
+    let state = include_str!("../src/state.rs");
+    assert!(state.contains("RustfsObjectStore::from_config"));
+    assert!(state.contains(".put_object(object.clone())"));
+
+    let env = include_str!("../.env.example");
+    for required in [
+        "RUSTFS_BUCKET=post-assets",
+        "RUSTFS_REGION=us-east-1",
+        "RUSTFS_ACCESS_KEY=rustfsadmin",
+        "RUSTFS_SECRET_KEY=rustfsadmin",
+        "RUSTFS_FORCE_PATH_STYLE=true",
+    ] {
+        assert!(
+            env.contains(required),
+            "missing .env.example entry: {required}"
+        );
+    }
+
+    let compose = include_str!("../docker-compose.yml");
+    for required in [
+        "RUSTFS_ACCESS_KEY: rustfsadmin",
+        "RUSTFS_SECRET_KEY: rustfsadmin",
+        "RUSTFS_CONSOLE_ENABLE: \"true\"",
+    ] {
+        assert!(
+            compose.contains(required),
+            "missing docker compose entry: {required}"
+        );
+    }
+}
+
+#[test]
+fn binary_upload_checks_postgres_hash_before_writing_rustfs_object() {
+    let state = include_str!("../src/state.rs");
+    let start = state
+        .find("pub async fn upload_binary_file")
+        .expect("upload_binary_file should exist");
+    let end = state[start..]
+        .find("pub async fn admin_dashboard")
+        .expect("upload_binary_file should end before admin_dashboard")
+        + start;
+    let upload_binary = &state[start..end];
+
+    let dedupe_index = upload_binary
+        .find("PostgresFileRepository::find_by_hash(pool, &object.asset.content_hash)")
+        .expect("binary uploads should check existing file hash before writing object storage");
+    let put_index = upload_binary
+        .find(".put_object(object.clone())")
+        .expect("binary uploads should write the object for new hashes");
+
+    assert!(
+        dedupe_index < put_index,
+        "binary uploads must return existing metadata before writing RustFS to avoid orphan objects"
+    );
+}
+
+#[test]
 fn file_upload_routes_and_editor_inventory_are_registered() {
     assert!(post::app::api_route_inventory().contains(&"/api/files"));
+    assert!(post::app::api_route_inventory().contains(&"/api/files/binary"));
     let text = post::app::ui_feature_inventory();
     for required in ["图片上传", "MIME 类型", "文件大小", "Markdown 图片链接"] {
         assert!(text.contains(required), "missing {required}");
     }
+
+    let api = include_str!("../src/api.rs");
+    assert!(api.contains("upload_binary_file"));
 }
 
 #[test]

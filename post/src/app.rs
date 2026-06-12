@@ -77,6 +77,7 @@ pub fn api_route_inventory() -> Vec<&'static str> {
         "/api/admin/reports",
         "/api/admin/reports/{report_id}/handle",
         "/api/files",
+        "/api/files/binary",
         "/api/login",
         "/api/register",
         "/api/logout",

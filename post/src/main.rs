@@ -23,13 +23,17 @@ async fn main() -> anyhow::Result<()> {
         db,
         forum: forum_store,
     };
+    let page_state = app_state.clone();
+    let shell_options = leptos_options.clone();
 
     let app = Router::new()
         .merge(api::routes(app_state))
-        .leptos_routes(&leptos_options, routes, {
-            let leptos_options = leptos_options.clone();
-            move || shell(leptos_options.clone())
-        })
+        .leptos_routes_with_context(
+            &leptos_options,
+            routes,
+            move || provide_context(page_state.clone()),
+            move || shell(shell_options.clone()),
+        )
         .fallback(leptos_axum::file_and_error_handler(shell))
         .with_state(leptos_options);
 

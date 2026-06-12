@@ -18,7 +18,7 @@ use crate::{
         announcements::{AnnouncementItem, AnnouncementReadState, CreateAnnouncementRequest},
         auth::{LoginRequest, RegisterRequest, Session},
         comments::{CommentNode, CreateCommentRequest},
-        files::{FileAsset, FileUploadRequest},
+        files::{FileAsset, FileBinaryUploadRequest, FileUploadRequest},
         home::{HomePageData, HomeQuery, HomeSort, HomeTab, HomeTimeRange},
         moderation::{
             ModerationCommentAction, ModerationCommentRow, ModerationPostAction, ModerationPostRow,
@@ -45,7 +45,7 @@ use crate::{
         },
     },
     error::ForumError,
-    state::{AppState, ForumStore},
+    state::AppState,
 };
 
 pub fn routes(state: AppState) -> Router<LeptosOptions> {
@@ -143,6 +143,7 @@ pub fn routes(state: AppState) -> Router<LeptosOptions> {
             post(handle_admin_report),
         )
         .route("/api/files", post(upload_file))
+        .route("/api/files/binary", post(upload_binary_file))
         .route("/api/login", post(login))
         .route("/api/register", post(register))
         .route("/api/logout", post(logout))
@@ -246,11 +247,11 @@ async fn search(
 }
 
 async fn admin_dashboard(
-    Extension(store): Extension<ForumStore>,
+    Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<AdminDashboard>, ApiError> {
-    let user_id = params.user_id.unwrap_or_else(|| store.demo_user().user_id);
-    Ok(Json(store.admin_dashboard(user_id)?))
+    let user_id = require_actor_id(&state, params.actor()).await?;
+    Ok(Json(state.admin_dashboard(user_id).await?))
 }
 
 async fn public_categories(Extension(state): Extension<AppState>) -> Json<Vec<CategoryItem>> {
@@ -265,9 +266,7 @@ async fn list_admin_categories(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<CategoryItem>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.list_admin_categories(user_id).await?))
 }
 
@@ -276,9 +275,7 @@ async fn create_admin_category(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<CreateCategoryRequest>,
 ) -> Result<(StatusCode, Json<CategoryItem>), ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let category = state.create_category(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(category)))
 }
@@ -289,9 +286,7 @@ async fn update_admin_category(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<UpdateCategoryRequest>,
 ) -> Result<Json<CategoryItem>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(
         state.update_category(user_id, category_id, request).await?,
     ))
@@ -302,9 +297,7 @@ async fn disable_admin_category(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<CategoryItem>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.disable_category(user_id, category_id).await?))
 }
 
@@ -312,9 +305,7 @@ async fn list_admin_tags(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<TagItem>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.list_admin_tags(user_id).await?))
 }
 
@@ -323,9 +314,7 @@ async fn create_admin_tag(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<CreateTagRequest>,
 ) -> Result<(StatusCode, Json<TagItem>), ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let tag = state.create_tag(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(tag)))
 }
@@ -336,9 +325,7 @@ async fn update_admin_tag(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<UpdateTagRequest>,
 ) -> Result<Json<TagItem>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.update_tag(user_id, tag_id, request).await?))
 }
 
@@ -348,9 +335,7 @@ async fn merge_admin_tag(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<MergeTagRequest>,
 ) -> Result<Json<TagItem>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.merge_tag(user_id, tag_id, request).await?))
 }
 
@@ -359,9 +344,7 @@ async fn delete_admin_tag(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<TagItem>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.delete_tag(user_id, tag_id).await?))
 }
 
@@ -369,9 +352,7 @@ async fn list_admin_posts(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<ModerationPostRow>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.admin_posts(user_id).await?))
 }
 
@@ -380,9 +361,7 @@ async fn take_down_admin_post(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<ModerationPostAction>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.take_down_post(user_id, post_id).await?))
 }
 
@@ -391,9 +370,7 @@ async fn restore_admin_post(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<ModerationPostAction>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.restore_post(user_id, post_id).await?))
 }
 
@@ -402,9 +379,7 @@ async fn delete_admin_post(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<ModerationPostAction>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.delete_post(user_id, post_id).await?))
 }
 
@@ -413,9 +388,7 @@ async fn pin_admin_post(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<ModerationPostAction>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.pin_post(user_id, post_id).await?))
 }
 
@@ -424,9 +397,7 @@ async fn unpin_admin_post(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<ModerationPostAction>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.unpin_post(user_id, post_id).await?))
 }
 
@@ -434,9 +405,7 @@ async fn list_admin_comments(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<ModerationCommentRow>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.admin_comments(user_id).await?))
 }
 
@@ -445,9 +414,7 @@ async fn delete_admin_comment(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<ModerationCommentAction>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.delete_comment(user_id, comment_id).await?))
 }
 
@@ -456,9 +423,7 @@ async fn recover_admin_comment(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<ModerationCommentAction>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.recover_comment(user_id, comment_id).await?))
 }
 
@@ -466,9 +431,7 @@ async fn list_admin_users(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<AdminUserRow>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.admin_users(user_id).await?))
 }
 
@@ -478,9 +441,7 @@ async fn disable_admin_user(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(context): Json<AuditContext>,
 ) -> Result<Json<AdminUserRow>, ApiError> {
-    let admin_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let admin_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(
         state
             .disable_user(admin_id, target_user_id, context)
@@ -494,9 +455,7 @@ async fn enable_admin_user(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(context): Json<AuditContext>,
 ) -> Result<Json<AdminUserRow>, ApiError> {
-    let admin_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let admin_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(
         state.enable_user(admin_id, target_user_id, context).await?,
     ))
@@ -508,9 +467,7 @@ async fn update_admin_user_roles(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<UpdateUserRolesRequest>,
 ) -> Result<Json<AdminUserRow>, ApiError> {
-    let admin_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let admin_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(
         state
             .update_user_roles(admin_id, target_user_id, request)
@@ -522,9 +479,7 @@ async fn list_admin_roles(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<Role>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.list_roles(user_id).await?))
 }
 
@@ -533,9 +488,7 @@ async fn create_admin_role(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<CreateRoleRequest>,
 ) -> Result<(StatusCode, Json<Role>), ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let role = state.create_role(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(role)))
 }
@@ -546,9 +499,7 @@ async fn update_admin_role(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<UpdateRoleRequest>,
 ) -> Result<Json<Role>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.update_role(user_id, &role_code, request).await?))
 }
 
@@ -558,9 +509,7 @@ async fn delete_admin_role(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(context): Json<AuditContext>,
 ) -> Result<Json<Role>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.delete_role(user_id, &role_code, context).await?))
 }
 
@@ -568,9 +517,7 @@ async fn list_admin_permissions(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<Permission>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.list_permissions(user_id).await?))
 }
 
@@ -578,9 +525,7 @@ async fn list_admin_audit_logs(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<AuditLogEntry>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.audit_logs(user_id).await?))
 }
 
@@ -595,9 +540,7 @@ async fn mark_announcement_read(
     Extension(state): Extension<AppState>,
     Json(request): Json<UserActionRequest>,
 ) -> Result<Json<AnnouncementReadState>, ApiError> {
-    let user_id = request
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, request.actor()).await?;
     Ok(Json(
         state
             .mark_announcement_read(user_id, announcement_id)
@@ -609,9 +552,7 @@ async fn list_admin_announcements(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<AnnouncementItem>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.list_admin_announcements(user_id).await?))
 }
 
@@ -620,9 +561,7 @@ async fn create_admin_announcement(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<CreateAnnouncementRequest>,
 ) -> Result<(StatusCode, Json<AnnouncementItem>), ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let announcement = state.create_announcement(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(announcement)))
 }
@@ -632,9 +571,7 @@ async fn publish_admin_announcement(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<AnnouncementItem>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(
         state.publish_announcement(user_id, announcement_id).await?,
     ))
@@ -645,9 +582,7 @@ async fn withdraw_admin_announcement(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<AnnouncementItem>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(
         state
             .withdraw_announcement(user_id, announcement_id)
@@ -659,9 +594,7 @@ async fn list_admin_reports(
     Extension(state): Extension<AppState>,
     Query(params): Query<AdminDashboardQueryParams>,
 ) -> Result<Json<Vec<ReportItem>>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.list_reports(user_id).await?))
 }
 
@@ -671,20 +604,29 @@ async fn handle_admin_report(
     Query(params): Query<AdminDashboardQueryParams>,
     Json(request): Json<HandleReportRequest>,
 ) -> Result<Json<ReportItem>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(
         state.handle_report(user_id, report_id, request).await?,
     ))
 }
 
 async fn upload_file(
-    Extension(store): Extension<ForumStore>,
+    Extension(state): Extension<AppState>,
+    Query(params): Query<AuthorQueryParams>,
     Json(request): Json<FileUploadRequest>,
 ) -> Result<(StatusCode, Json<FileAsset>), ApiError> {
-    let user = store.demo_user();
-    let asset = store.upload_file(user.user_id, request)?;
+    let user_id = require_actor_id(&state, params.actor()).await?;
+    let asset = state.upload_file(user_id, request).await?;
+    Ok((StatusCode::CREATED, Json(asset)))
+}
+
+async fn upload_binary_file(
+    Extension(state): Extension<AppState>,
+    Query(params): Query<AuthorQueryParams>,
+    Json(request): Json<FileBinaryUploadRequest>,
+) -> Result<(StatusCode, Json<FileAsset>), ApiError> {
+    let user_id = require_actor_id(&state, params.actor()).await?;
+    let asset = state.upload_binary_file(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(asset)))
 }
 
@@ -692,26 +634,24 @@ async fn list_notifications(
     Extension(state): Extension<AppState>,
     Query(params): Query<NotificationQueryParams>,
 ) -> Result<Json<NotificationCenter>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.notification_center(user_id).await?))
 }
 
 async fn notification_socket(
     Path(user_id): Path<Uuid>,
     ws: WebSocketUpgrade,
-    Extension(store): Extension<ForumStore>,
+    Extension(state): Extension<AppState>,
 ) -> Response {
-    ws.on_upgrade(move |socket| notification_socket_session(socket, store, user_id))
+    ws.on_upgrade(move |socket| notification_socket_session(socket, state, user_id))
 }
 
-async fn notification_socket_session(mut socket: WebSocket, store: ForumStore, user_id: Uuid) {
-    if store.connect_notification_socket(user_id).is_err() {
+async fn notification_socket_session(mut socket: WebSocket, state: AppState, user_id: Uuid) {
+    if state.connect_notification_socket(user_id).await.is_err() {
         return;
     }
 
-    if let Ok(pushes) = store.pending_notification_pushes(user_id) {
+    if let Ok(pushes) = state.pending_notification_pushes(user_id).await {
         for push in pushes {
             let text = format!(
                 "notification:{}:{}",
@@ -719,7 +659,7 @@ async fn notification_socket_session(mut socket: WebSocket, store: ForumStore, u
                 push.title.replace('\n', " ")
             );
             if socket.send(Message::Text(text.into())).await.is_err() {
-                let _ = store.disconnect_notification_socket(user_id);
+                let _ = state.disconnect_notification_socket(user_id).await;
                 return;
             }
         }
@@ -728,37 +668,37 @@ async fn notification_socket_session(mut socket: WebSocket, store: ForumStore, u
     while let Some(Ok(message)) = socket.recv().await {
         if let Message::Text(text) = message {
             if let Ok(push_id) = Uuid::parse_str(text.trim()) {
-                let _ = store.ack_notification_push(user_id, push_id);
+                let _ = state.ack_notification_push(user_id, push_id).await;
             }
         }
     }
 
-    let _ = store.disconnect_notification_socket(user_id);
+    let _ = state.disconnect_notification_socket(user_id).await;
 }
 
 async fn notification_online_stats(
-    Extension(store): Extension<ForumStore>,
+    Extension(state): Extension<AppState>,
     Query(params): Query<NotificationQueryParams>,
 ) -> Result<Json<NotificationConnectionStats>, ApiError> {
-    let user_id = params.user_id.unwrap_or_else(|| store.demo_user().user_id);
-    Ok(Json(store.notification_connection_stats(user_id)?))
+    let user_id = require_actor_id(&state, params.actor()).await?;
+    Ok(Json(state.notification_connection_stats(user_id).await?))
 }
 
 async fn list_pending_notification_pushes(
-    Extension(store): Extension<ForumStore>,
+    Extension(state): Extension<AppState>,
     Query(params): Query<NotificationQueryParams>,
 ) -> Result<Json<Vec<NotificationPush>>, ApiError> {
-    let user_id = params.user_id.unwrap_or_else(|| store.demo_user().user_id);
-    Ok(Json(store.pending_notification_pushes(user_id)?))
+    let user_id = require_actor_id(&state, params.actor()).await?;
+    Ok(Json(state.pending_notification_pushes(user_id).await?))
 }
 
 async fn ack_notification_push(
     Path(push_id): Path<Uuid>,
-    Extension(store): Extension<ForumStore>,
+    Extension(state): Extension<AppState>,
     Json(request): Json<NotificationReadRequest>,
 ) -> Result<Json<NotificationConnectionStats>, ApiError> {
-    let user_id = request.user_id.unwrap_or_else(|| store.demo_user().user_id);
-    Ok(Json(store.ack_notification_push(user_id, push_id)?))
+    let user_id = require_actor_id(&state, request.actor()).await?;
+    Ok(Json(state.ack_notification_push(user_id, push_id).await?))
 }
 
 async fn mark_notification_read(
@@ -766,9 +706,7 @@ async fn mark_notification_read(
     Extension(state): Extension<AppState>,
     Json(request): Json<NotificationReadRequest>,
 ) -> Result<Json<NotificationCenter>, ApiError> {
-    let user_id = request
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, request.actor()).await?;
     Ok(Json(
         state
             .mark_notification_read(user_id, notification_id)
@@ -780,9 +718,7 @@ async fn mark_all_notifications_read(
     Extension(state): Extension<AppState>,
     Json(request): Json<NotificationReadRequest>,
 ) -> Result<Json<NotificationCenter>, ApiError> {
-    let user_id = request
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, request.actor()).await?;
     Ok(Json(state.mark_all_notifications_read(user_id).await?))
 }
 
@@ -853,16 +789,52 @@ struct SearchQueryParams {
 #[derive(Clone, Debug, Default, Deserialize)]
 struct NotificationQueryParams {
     user_id: Option<Uuid>,
+    session_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct AdminDashboardQueryParams {
     user_id: Option<Uuid>,
+    session_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct AuthorQueryParams {
     user_id: Option<Uuid>,
+    session_id: Option<Uuid>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ActorIdentity {
+    user_id: Option<Uuid>,
+    session_id: Option<Uuid>,
+}
+
+impl NotificationQueryParams {
+    fn actor(&self) -> ActorIdentity {
+        ActorIdentity {
+            user_id: self.user_id,
+            session_id: self.session_id,
+        }
+    }
+}
+
+impl AdminDashboardQueryParams {
+    fn actor(&self) -> ActorIdentity {
+        ActorIdentity {
+            user_id: self.user_id,
+            session_id: self.session_id,
+        }
+    }
+}
+
+impl AuthorQueryParams {
+    fn actor(&self) -> ActorIdentity {
+        ActorIdentity {
+            user_id: self.user_id,
+            session_id: self.session_id,
+        }
+    }
 }
 
 impl From<SearchQueryParams> for SearchQuery {
@@ -891,9 +863,7 @@ async fn create_post(
     Query(params): Query<AuthorQueryParams>,
     Json(request): Json<CreatePostRequest>,
 ) -> Result<(StatusCode, Json<PostDetail>), ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let detail = state.create_post(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(detail)))
 }
@@ -903,9 +873,7 @@ async fn autosave_draft(
     Query(params): Query<AuthorQueryParams>,
     Json(request): Json<AutosaveDraftRequest>,
 ) -> Result<(StatusCode, Json<PostDetail>), ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let detail = state.autosave_draft(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(detail)))
 }
@@ -916,9 +884,7 @@ async fn update_post(
     Query(params): Query<AuthorQueryParams>,
     Json(request): Json<UpdatePostRequest>,
 ) -> Result<Json<PostDetail>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.update_post(user_id, post_id, request).await?))
 }
 
@@ -927,9 +893,7 @@ async fn delete_own_post(
     Extension(state): Extension<AppState>,
     Query(params): Query<AuthorQueryParams>,
 ) -> Result<Json<PostDetail>, ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.delete_own_post(user_id, post_id).await?))
 }
 
@@ -954,9 +918,7 @@ async fn create_comment(
     Json(mut request): Json<CreateCommentRequest>,
 ) -> Result<(StatusCode, Json<CommentNode>), ApiError> {
     request.post_id = post_id;
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let comment = state.add_comment(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(comment)))
 }
@@ -966,9 +928,7 @@ async fn delete_own_comment(
     Extension(state): Extension<AppState>,
     Json(request): Json<UserActionRequest>,
 ) -> Result<Json<CommentNode>, ApiError> {
-    let user_id = request
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, request.actor()).await?;
     Ok(Json(state.delete_own_comment(user_id, comment_id).await?))
 }
 
@@ -977,9 +937,7 @@ async fn toggle_comment_like(
     Extension(state): Extension<AppState>,
     Json(request): Json<UserActionRequest>,
 ) -> Result<Json<ToggleResult>, ApiError> {
-    let user_id = request
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, request.actor()).await?;
     Ok(Json(state.toggle_comment_like(user_id, comment_id).await?))
 }
 
@@ -989,9 +947,7 @@ async fn report_comment(
     Query(params): Query<AuthorQueryParams>,
     Json(request): Json<CreateReportRequest>,
 ) -> Result<(StatusCode, Json<ReportItem>), ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let report = state.report_comment(user_id, comment_id, request).await?;
     Ok((StatusCode::CREATED, Json(report)))
 }
@@ -1001,9 +957,7 @@ async fn toggle_like(
     Extension(state): Extension<AppState>,
     Json(request): Json<UserActionRequest>,
 ) -> Result<Json<ToggleResult>, ApiError> {
-    let user_id = request
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, request.actor()).await?;
     Ok(Json(state.toggle_post_like(user_id, post_id).await?))
 }
 
@@ -1012,9 +966,7 @@ async fn toggle_favorite(
     Extension(state): Extension<AppState>,
     Json(request): Json<UserActionRequest>,
 ) -> Result<Json<ToggleResult>, ApiError> {
-    let user_id = request
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, request.actor()).await?;
     Ok(Json(state.toggle_post_favorite(user_id, post_id).await?))
 }
 
@@ -1023,9 +975,7 @@ async fn create_report(
     Query(params): Query<AuthorQueryParams>,
     Json(request): Json<CreateReportRequest>,
 ) -> Result<(StatusCode, Json<ReportItem>), ApiError> {
-    let user_id = params
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let user_id = require_actor_id(&state, params.actor()).await?;
     let report = state.create_report(user_id, request).await?;
     Ok((StatusCode::CREATED, Json(report)))
 }
@@ -1060,9 +1010,7 @@ async fn follow_user(
     Extension(state): Extension<AppState>,
     Json(request): Json<UserActionRequest>,
 ) -> Result<Json<FollowState>, ApiError> {
-    let follower_id = request
-        .user_id
-        .unwrap_or_else(|| state.forum.demo_user().user_id);
+    let follower_id = require_actor_id(&state, request.actor()).await?;
     Ok(Json(state.follow_user(follower_id, user_id).await?))
 }
 
@@ -1077,6 +1025,25 @@ async fn user_space(
 #[derive(Clone, Debug, Deserialize)]
 struct UserActionRequest {
     user_id: Option<Uuid>,
+    session_id: Option<Uuid>,
+}
+
+impl UserActionRequest {
+    fn actor(&self) -> ActorIdentity {
+        ActorIdentity {
+            user_id: self.user_id,
+            session_id: self.session_id,
+        }
+    }
+}
+
+impl NotificationReadRequest {
+    fn actor(&self) -> ActorIdentity {
+        ActorIdentity {
+            user_id: self.user_id,
+            session_id: self.session_id,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1087,6 +1054,18 @@ struct LogoutRequest {
 #[derive(Clone, Debug, Default, Deserialize)]
 struct UserSpaceQueryParams {
     viewer_id: Option<Uuid>,
+}
+
+fn require_user_id(user_id: Option<Uuid>) -> Result<Uuid, ApiError> {
+    user_id.ok_or(ForumError::Unauthorized.into())
+}
+
+async fn require_actor_id(state: &AppState, identity: ActorIdentity) -> Result<Uuid, ApiError> {
+    if let Some(session_id) = identity.session_id {
+        return Ok(state.current_session(session_id).await?.user.user_id);
+    }
+
+    require_user_id(identity.user_id)
 }
 
 #[derive(Debug)]

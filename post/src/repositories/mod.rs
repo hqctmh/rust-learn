@@ -1,6 +1,7 @@
 pub mod announcements;
 pub mod auth;
 pub mod comments;
+pub mod files;
 pub mod follows;
 pub mod home;
 pub mod moderation;

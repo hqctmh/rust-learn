@@ -4,49 +4,77 @@
 
 **Goal:** Add a runnable file upload foundation for PRD 4.2, 6, and 7: validate image MIME/size, store file metadata, produce Markdown-usable URLs, and expose upload metadata through API and editor UI.
 
-**Architecture:** Add `domain::files` for upload request/metadata/limits. `ForumStore` stores file metadata in memory and validates uploader, MIME type, and size. `POST /api/files` accepts JSON metadata for the demo path and returns a `FileAsset` with bucket/key/hash/url fields that can later be backed by RustFS.
+**Architecture:** Add `domain::files` for upload request/metadata/limits. `ForumStore` stores file metadata in memory and validates uploader, MIME type, and size. `POST /api/files` accepts JSON metadata for the demo path and returns a `FileAsset` with bucket/key/hash/url fields. `POST /api/files/binary` accepts base64 image bytes, computes server-side SHA-256, validates the derived metadata, writes the object through a RustFS/S3-compatible adapter in PostgreSQL runtime mode, and returns the same Markdown-ready `FileAsset`.
 
-**Tech Stack:** Rust 2024, Axum 0.8 JSON API, Leptos 0.8, existing in-memory `ForumStore`.
+**Tech Stack:** Rust 2024, Axum 0.8 JSON API, Leptos 0.8, existing in-memory `ForumStore`, RustFS through the S3-compatible `rust-s3` client.
 
 ---
 
 ## Scope
 
-This slice does not stream binary multipart content to RustFS yet. It implements the validation and metadata contract needed by the editor, database schema, and later RustFS adapter.
+This slice does not stream multipart content yet. It implements the validation, server-side binary decoding/hash contract, object-store payload, RustFS/S3-compatible object write for PostgreSQL runtime mode, metadata persistence, and Markdown URL shape needed by the editor and database schema.
 
 ## Tasks
 
 ### Task 1: Contract Tests
 
-- [ ] Valid PNG/JPEG/WebP upload returns `FileAsset` with `/uploads/...` URL and Markdown image snippet.
-- [ ] Unsupported MIME type is rejected.
-- [ ] Oversized file is rejected.
-- [ ] API inventory includes `/api/files`.
-- [ ] Editor inventory mentions MIME, size, URL, and Markdown insertion.
+- [x] Valid PNG/JPEG/WebP upload returns `FileAsset` with `/uploads/...` URL and Markdown image snippet.
+- [x] Unsupported MIME type is rejected.
+- [x] Oversized file is rejected.
+- [x] Binary/base64 upload computes server-side hash and file size.
+- [x] Binary/base64 upload exposes object-store payload with bucket, key, content type, and bytes.
+- [x] RustFS object-store adapter uses S3-compatible endpoint, credentials, path-style mode, and content-type object upload.
+- [x] API inventory includes `/api/files` and `/api/files/binary`.
+- [x] Editor inventory mentions MIME, size, URL, and Markdown insertion.
 
 ### Task 2: Domain and Store
 
-- [ ] Create `post/src/domain/files.rs`.
-- [ ] Expose module in `domain/mod.rs`.
-- [ ] Add `ForumData.files`.
-- [ ] Add `ForumStore::upload_file`.
+- [x] Create `post/src/domain/files.rs`.
+- [x] Expose module in `domain/mod.rs`.
+- [x] Add `ForumData.files`.
+- [x] Add `ForumStore::upload_file`.
+- [x] Add `FileBinaryUploadRequest`.
+- [x] Add `FileObjectUpload`.
+- [x] Add `ForumStore::upload_binary_file`.
+- [x] Add `AppState::upload_binary_file`.
+- [x] Add `RustfsObjectStore` and runtime RustFS config mapping.
 
 ### Task 3: API and Editor
 
-- [ ] Add `POST /api/files`.
-- [ ] Add `/api/files` to inventory.
-- [ ] Extend editor preview with upload contract and example Markdown image URL.
+- [x] Add `POST /api/files`.
+- [x] Add `POST /api/files/binary`.
+- [x] Add `/api/files` and `/api/files/binary` to inventory.
+- [x] Extend editor preview with upload contract and example Markdown image URL.
 
 ### Task 4: Verification
 
-- [ ] `cargo fmt`
-- [ ] `cargo test`
-- [ ] `cargo check`
-- [ ] `cargo leptos build`
-- [ ] IDEA error check
-- [ ] API/browser verify upload contract and editor page
+- [x] `cargo fmt`
+- [x] `cargo test`
+- [x] `cargo check`
+- [x] `cargo leptos build`
+- [x] IDEA error check not required by project instruction.
+- [x] API/browser verify upload contract and editor page.
 
 ## Self-Review
 
 - Covers PRD file metadata, MIME/size limits, generated URL, Markdown image use, and RustFS-ready shape.
-- Leaves binary streaming and actual RustFS persistence as a follow-up adapter.
+- Covers base64 binary JSON upload with server-side SHA-256 and file size derivation.
+- Covers object-store payload generation so the RustFS adapter can consume bytes, bucket, key, and content type without reparsing the API body.
+- Covers actual RustFS/S3-compatible object persistence for PostgreSQL runtime mode before metadata is inserted.
+- Leaves multipart streaming as a follow-up; current runnable API uses base64 JSON upload for the editor contract.
+
+## Current verification evidence (2026-06-12)
+
+- `cargo test --manifest-path post/Cargo.toml file_`: PASS, 8 passed.
+- `cargo test --manifest-path post/Cargo.toml rustfs_object_store_adapter_contract_uses_s3_put_object`: PASS, 1 passed.
+- `cargo fmt --manifest-path post/Cargo.toml`: PASS.
+- `cargo test --manifest-path post/Cargo.toml`: PASS, 100 passed.
+- `cargo check --manifest-path post/Cargo.toml`: PASS.
+- `cargo leptos build`: PASS. First sandbox run failed on Cargo registry cache permission for `web-time-1.1.0.crate`; non-sandbox rerun completed successfully.
+- Project instruction says this project does not need IDEA MCP problem checks.
+- `docker compose pull rustfs`: PASS after retry; `rustfs/rustfs:latest` pulled successfully.
+- `docker compose up -d rustfs`: PASS; `post-rustfs` started on ports 9000/9001.
+- API upload verification through `POST /api/files/binary?user_id=03ab4ea2-2a58-43ab-8f67-9ab89c419d8e`: PASS; returned `file_id=77c145df-a405-4cea-b67c-66c678f143f7`, `storage_key=markdown/2cf24dba5fb0/rustfs-unique-3117bde0.png`.
+- RustFS object verification: PASS; `post-rustfs:/data/post-assets/markdown/2cf24dba5fb0/rustfs-unique-3117bde0.png/xl.meta` exists.
+- PostgreSQL metadata verification: PASS; `file_assets` row exists for `77c145df-a405-4cea-b67c-66c678f143f7`.
+- Browser editor verification at `/posts/new`: PASS; page shows Markdown editor and upload contract text for RustFS storage, MIME validation, file size limit, and Markdown image link generation.

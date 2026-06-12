@@ -3,14 +3,30 @@ use leptos::prelude::*;
 use crate::{
     components::PageShell,
     domain::admin::{
-        AdminAnnouncementRow, AdminCategoryRow, AdminCommentRow, AdminPostRow, AdminReportRow,
-        AdminStat, AdminTagRow, AdminUserRow, admin_dashboard_demo,
+        AdminAnnouncementRow, AdminCategoryRow, AdminCommentRow, AdminDashboard, AdminPostRow,
+        AdminReportRow, AdminStat, AdminTagRow, AdminUserRow,
     },
+    page_data::{fallback_admin_dashboard, load_admin_dashboard},
 };
 
 #[component]
 pub fn AdminPage() -> impl IntoView {
-    let dashboard = admin_dashboard_demo();
+    let dashboard = Resource::new(|| (), |_| load_admin_dashboard());
+
+    view! {
+        <PageShell>
+            <Suspense fallback=move || view! { <AdminDashboardView dashboard=fallback_admin_dashboard()/> }>
+                {move || Suspend::new(async move {
+                    let dashboard = dashboard.await.unwrap_or_else(|_| fallback_admin_dashboard());
+                    view! { <AdminDashboardView dashboard/> }
+                })}
+            </Suspense>
+        </PageShell>
+    }
+}
+
+#[component]
+fn AdminDashboardView(dashboard: AdminDashboard) -> impl IntoView {
     let menu = dashboard.menu.clone();
     let stats = dashboard.stats.clone();
     let users = dashboard.users.clone();
@@ -24,17 +40,16 @@ pub fn AdminPage() -> impl IntoView {
     let audit_entries = dashboard.audit_entries.clone();
 
     view! {
-        <PageShell>
-            <div class="admin-layout">
-                <aside class="admin-sidebar">
-                    <div class="page-kicker">"RBAC 管理后台"</div>
-                    <ul class="menu">
-                        {menu.into_iter().enumerate().map(|(index, item)| view! {
-                            <li><a class=if index == 0 { "active" } else { "" }>{item.label}</a></li>
-                        }).collect_view()}
-                    </ul>
-                </aside>
-                <section class="admin-main">
+        <div class="admin-layout">
+            <aside class="admin-sidebar">
+                <div class="page-kicker">"RBAC 管理后台"</div>
+                <ul class="menu">
+                    {menu.into_iter().enumerate().map(|(index, item)| view! {
+                        <li><a class=if index == 0 { "active" } else { "" }>{item.label}</a></li>
+                    }).collect_view()}
+                </ul>
+            </aside>
+            <section class="admin-main">
                     <div class="section-heading">
                         <div>
                             <div class="page-kicker">"运营总览"</div>
@@ -198,9 +213,8 @@ pub fn AdminPage() -> impl IntoView {
                             </ul>
                         </section>
                     </div>
-                </section>
-            </div>
-        </PageShell>
+            </section>
+        </div>
     }
 }
 

@@ -15,7 +15,7 @@ use crate::{
         },
         auth::{RegisterRequest, Session, SessionUser},
         comments::{CommentNode, CreateCommentRequest},
-        files::{FileAsset, FileUploadRequest, build_file_asset},
+        files::{FileAsset, FileBinaryUploadRequest, FileUploadRequest, build_file_asset},
         home::{
             HomeAnnouncement, HomeCategory, HomePageData, HomeQuery, HomeTag, dense_workbench_home,
         },
@@ -58,15 +58,28 @@ use crate::{
 use sqlx::PgPool;
 
 #[cfg(feature = "ssr")]
+use crate::domain::{
+    admin::{
+        AdminAnnouncementRow, AdminCategoryRow, AdminCommentRow, AdminPostRow, AdminReportRow,
+        AdminStat, AdminTagRow, AdminUserRow as DashboardUserRow, AuditEntry,
+    },
+    announcements::AnnouncementStatus,
+    reports::ReportStatus,
+};
+
+#[cfg(feature = "ssr")]
+use crate::object_store::{RustfsObjectStore, RustfsObjectStoreConfig};
+
+#[cfg(feature = "ssr")]
 use crate::repositories::{
     announcements::PostgresAnnouncementRepository, auth::PostgresAuthRepository,
-    comments::PostgresCommentRepository, follows::PostgresFollowRepository,
-    home::PostgresHomeRepository, moderation::PostgresModerationRepository,
-    notifications::PostgresNotificationRepository, posts::PostgresPostRepository,
-    rbac::PostgresRbacRepository, reactions::PostgresReactionRepository,
-    reports::PostgresReportRepository, search::PostgresSearchRepository,
-    taxonomy::PostgresTaxonomyRepository, user_admin::PostgresUserAdminRepository,
-    users::PostgresUserSettingsRepository,
+    comments::PostgresCommentRepository, files::PostgresFileRepository,
+    follows::PostgresFollowRepository, home::PostgresHomeRepository,
+    moderation::PostgresModerationRepository, notifications::PostgresNotificationRepository,
+    posts::PostgresPostRepository, rbac::PostgresRbacRepository,
+    reactions::PostgresReactionRepository, reports::PostgresReportRepository,
+    search::PostgresSearchRepository, taxonomy::PostgresTaxonomyRepository,
+    user_admin::PostgresUserAdminRepository, users::PostgresUserSettingsRepository,
 };
 
 #[cfg(feature = "ssr")]
@@ -1532,6 +1545,176 @@ impl AppState {
             .await
             .map_err(|_| ForumError::Internal)
     }
+
+    pub async fn upload_file(
+        &self,
+        uploader_id: Uuid,
+        request: FileUploadRequest,
+    ) -> Result<FileAsset, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.upload_file(uploader_id, request);
+        };
+
+        request.validate().map_err(ForumError::Validation)?;
+        let uploader = PostgresAuthRepository::find_user_by_id(pool, uploader_id)
+            .await
+            .map_err(|_| ForumError::Internal)?
+            .ok_or(ForumError::Unauthorized)?;
+        if uploader.is_disabled() {
+            return Err(ForumError::Forbidden);
+        }
+        if let Some(existing) = PostgresFileRepository::find_by_hash(pool, &request.content_hash)
+            .await
+            .map_err(|_| ForumError::Internal)?
+        {
+            return Ok(existing);
+        }
+
+        let usage = request.usage.clone();
+        let asset = build_file_asset(Uuid::new_v4(), uploader_id, request);
+        PostgresFileRepository::insert_asset(pool, &asset, &usage)
+            .await
+            .map_err(|_| ForumError::Internal)
+    }
+
+    pub async fn upload_binary_file(
+        &self,
+        uploader_id: Uuid,
+        request: FileBinaryUploadRequest,
+    ) -> Result<FileAsset, ForumError> {
+        let object = request.to_object_upload().map_err(ForumError::Validation)?;
+        let Some(pool) = &self.db else {
+            return self.forum.upload_file(uploader_id, object.asset);
+        };
+
+        let uploader = PostgresAuthRepository::find_user_by_id(pool, uploader_id)
+            .await
+            .map_err(|_| ForumError::Internal)?
+            .ok_or(ForumError::Unauthorized)?;
+        if uploader.is_disabled() {
+            return Err(ForumError::Forbidden);
+        }
+        if let Some(existing) =
+            PostgresFileRepository::find_by_hash(pool, &object.asset.content_hash)
+                .await
+                .map_err(|_| ForumError::Internal)?
+        {
+            return Ok(existing);
+        }
+
+        let config = RustfsObjectStoreConfig::from_runtime_config(&RuntimeConfig::from_env());
+        let object_store = RustfsObjectStore::from_config(config)
+            .await
+            .map_err(|_| ForumError::Internal)?;
+        object_store
+            .put_object(object.clone())
+            .await
+            .map_err(|_| ForumError::Internal)?;
+
+        let usage = object.asset.usage.clone();
+        let asset = build_file_asset(Uuid::new_v4(), uploader_id, object.asset);
+        PostgresFileRepository::insert_asset(pool, &asset, &usage)
+            .await
+            .map_err(|_| ForumError::Internal)
+    }
+
+    pub async fn admin_dashboard(&self, user_id: Uuid) -> Result<AdminDashboard, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.admin_dashboard(user_id);
+        };
+
+        postgres_admin_user(pool, user_id).await?;
+        let users = self.admin_users(user_id).await?;
+        let posts = self.admin_posts(user_id).await?;
+        let comments = self.admin_comments(user_id).await?;
+        let categories = self.list_admin_categories(user_id).await?;
+        let tags = self.list_admin_tags(user_id).await?;
+        let announcements = self.list_admin_announcements(user_id).await?;
+        let reports = self.list_reports(user_id).await?;
+        let audit_logs = self.audit_logs(user_id).await?;
+
+        let mut dashboard = admin_dashboard_demo();
+        dashboard.stats = vec![
+            admin_stat("用户总数", users.len(), "PostgreSQL"),
+            admin_stat("帖子总数", posts.len(), "PostgreSQL"),
+            admin_stat("评论总数", comments.len(), "PostgreSQL"),
+            admin_stat("在线用户", 0, "WebSocket"),
+        ];
+        dashboard.permissions = admin_permissions();
+        dashboard.users = users.into_iter().map(dashboard_user_row).collect();
+        dashboard.moderation_posts = posts.into_iter().map(dashboard_post_row).collect();
+        dashboard.moderation_comments = comments.into_iter().map(dashboard_comment_row).collect();
+        dashboard.categories = categories.into_iter().map(dashboard_category_row).collect();
+        dashboard.tags = tags.into_iter().map(dashboard_tag_row).collect();
+        dashboard.announcements = announcements
+            .into_iter()
+            .map(dashboard_announcement_row)
+            .collect();
+        dashboard.reports = reports.into_iter().map(dashboard_report_row).collect();
+        dashboard.audit_entries = audit_logs.into_iter().map(dashboard_audit_entry).collect();
+        Ok(dashboard)
+    }
+
+    pub async fn connect_notification_socket(
+        &self,
+        user_id: Uuid,
+    ) -> Result<NotificationConnectionStats, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.connect_notification_socket(user_id);
+        };
+
+        ensure_postgres_active_user(pool, user_id).await?;
+        self.forum.connect_notification_socket_trusted(user_id)
+    }
+
+    pub async fn disconnect_notification_socket(
+        &self,
+        user_id: Uuid,
+    ) -> Result<NotificationConnectionStats, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.disconnect_notification_socket(user_id);
+        };
+
+        ensure_postgres_active_user(pool, user_id).await?;
+        self.forum.disconnect_notification_socket_trusted(user_id)
+    }
+
+    pub async fn notification_connection_stats(
+        &self,
+        user_id: Uuid,
+    ) -> Result<NotificationConnectionStats, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.notification_connection_stats(user_id);
+        };
+
+        ensure_postgres_active_user(pool, user_id).await?;
+        self.forum.notification_connection_stats_trusted(user_id)
+    }
+
+    pub async fn pending_notification_pushes(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<NotificationPush>, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.pending_notification_pushes(user_id);
+        };
+
+        ensure_postgres_active_user(pool, user_id).await?;
+        self.forum.pending_notification_pushes_trusted(user_id)
+    }
+
+    pub async fn ack_notification_push(
+        &self,
+        user_id: Uuid,
+        push_id: Uuid,
+    ) -> Result<NotificationConnectionStats, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.ack_notification_push(user_id, push_id);
+        };
+
+        ensure_postgres_active_user(pool, user_id).await?;
+        self.forum.ack_notification_push_trusted(user_id, push_id)
+    }
 }
 
 #[cfg(feature = "ssr")]
@@ -1571,6 +1754,18 @@ async fn postgres_admin_user(
         return Err(ForumError::Forbidden);
     }
     Ok(user)
+}
+
+#[cfg(feature = "ssr")]
+async fn ensure_postgres_active_user(pool: &PgPool, user_id: Uuid) -> Result<(), ForumError> {
+    let user = PostgresAuthRepository::find_user_by_id(pool, user_id)
+        .await
+        .map_err(|_| ForumError::Internal)?
+        .ok_or(ForumError::Unauthorized)?;
+    if user.is_disabled() {
+        return Err(ForumError::Forbidden);
+    }
+    Ok(())
 }
 
 #[cfg(feature = "ssr")]
@@ -1621,12 +1816,202 @@ async fn postgres_report_target_title(
     }
 }
 
+#[cfg(feature = "ssr")]
+fn admin_stat(label: &str, value: usize, delta: &str) -> AdminStat {
+    AdminStat {
+        label: label.to_string(),
+        value: value.to_string(),
+        delta: delta.to_string(),
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn dashboard_user_row(row: AdminUserRow) -> DashboardUserRow {
+    DashboardUserRow {
+        username: row.username,
+        nickname: row.nickname,
+        roles: row.roles,
+        status: if row.disabled { "已禁用" } else { "正常" }.to_string(),
+        actions: if row.disabled {
+            vec!["解禁用户".to_string(), "调整角色".to_string()]
+        } else {
+            vec!["调整角色".to_string(), "禁用用户".to_string()]
+        },
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn dashboard_post_row(row: ModerationPostRow) -> AdminPostRow {
+    AdminPostRow {
+        title: row.title,
+        author: row.author_name,
+        category: row.category_name.unwrap_or_else(|| "未分类".to_string()),
+        status: post_status_label(&row.status).to_string(),
+        actions: match row.status {
+            PostStatus::Published => vec![
+                "下架".to_string(),
+                if row.pinned { "取消置顶" } else { "置顶" }.to_string(),
+                "删除".to_string(),
+            ],
+            PostStatus::Offline => vec!["恢复".to_string(), "查看".to_string(), "删除".to_string()],
+            PostStatus::Draft => vec!["查看".to_string(), "删除".to_string()],
+            PostStatus::Deleted => vec!["恢复".to_string(), "查看".to_string()],
+        },
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn dashboard_comment_row(row: ModerationCommentRow) -> AdminCommentRow {
+    AdminCommentRow {
+        post_title: row.post_title,
+        author: row.author_name,
+        content: row.content,
+        status: if row.deleted { "已删除" } else { "正常" }.to_string(),
+        actions: if row.deleted {
+            vec!["恢复评论".to_string(), "查看帖子".to_string()]
+        } else {
+            vec!["删除评论".to_string(), "查看帖子".to_string()]
+        },
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn dashboard_category_row(row: CategoryItem) -> AdminCategoryRow {
+    AdminCategoryRow {
+        name: row.name,
+        color: row.color,
+        sort_order: row.sort_order,
+        post_count: row.post_count,
+        status: if row.enabled { "启用" } else { "停用" }.to_string(),
+        actions: vec![
+            "编辑".to_string(),
+            "调整排序".to_string(),
+            if row.enabled { "停用" } else { "启用" }.to_string(),
+        ],
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn dashboard_tag_row(row: TagItem) -> AdminTagRow {
+    AdminTagRow {
+        name: row.name,
+        sort_order: row.sort_order,
+        use_count: row.use_count,
+        status: if row.enabled { "启用" } else { "停用" }.to_string(),
+        actions: vec![
+            "编辑".to_string(),
+            "合并标签".to_string(),
+            if row.enabled { "禁用" } else { "启用" }.to_string(),
+        ],
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn dashboard_announcement_row(row: AnnouncementItem) -> AdminAnnouncementRow {
+    AdminAnnouncementRow {
+        title: row.title,
+        announcement_type: row.announcement_type,
+        audience: announcement_audience_label(&row.audience),
+        status: announcement_status_label(&row.status).to_string(),
+        actions: match row.status {
+            AnnouncementStatus::Draft => vec!["发布公告".to_string(), "编辑".to_string()],
+            AnnouncementStatus::Published => {
+                vec!["下线公告".to_string(), "推送公告".to_string()]
+            }
+            AnnouncementStatus::Withdrawn => vec!["重新发布".to_string(), "编辑".to_string()],
+        },
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn dashboard_report_row(row: ReportItem) -> AdminReportRow {
+    AdminReportRow {
+        target: row
+            .target_title
+            .unwrap_or_else(|| row.target_id.hyphenated().to_string()),
+        target_type: report_target_type_label(&row.target_type).to_string(),
+        reason: row.reason,
+        reporter: row.reporter_name,
+        status: report_status_label(&row.status).to_string(),
+        actions: match row.status {
+            ReportStatus::Pending => vec![
+                "标记已处理".to_string(),
+                "驳回".to_string(),
+                "删除违规内容".to_string(),
+            ],
+            ReportStatus::Handled | ReportStatus::Rejected => vec!["查看详情".to_string()],
+        },
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn dashboard_audit_entry(row: AuditLogEntry) -> AuditEntry {
+    AuditEntry {
+        actor: row.actor_name,
+        action: row.action,
+        target: row.target_label,
+        ip: row.ip.unwrap_or_else(|| "unknown".to_string()),
+        user_agent: row.user_agent.unwrap_or_else(|| "unknown".to_string()),
+        time_label: row.created_at.to_string(),
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn post_status_label(status: &PostStatus) -> &'static str {
+    match status {
+        PostStatus::Draft => "草稿",
+        PostStatus::Published => "已发布",
+        PostStatus::Offline => "已下架",
+        PostStatus::Deleted => "已删除",
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn announcement_audience_label(audience: &AnnouncementAudience) -> String {
+    match audience {
+        AnnouncementAudience::AllUsers => "全体用户".to_string(),
+        AnnouncementAudience::UserIds(user_ids) => format!("指定用户({})", user_ids.len()),
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn announcement_status_label(status: &AnnouncementStatus) -> &'static str {
+    match status {
+        AnnouncementStatus::Draft => "草稿",
+        AnnouncementStatus::Published => "已发布",
+        AnnouncementStatus::Withdrawn => "已撤回",
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn report_target_type_label(target_type: &ReportTargetType) -> &'static str {
+    match target_type {
+        ReportTargetType::Post => "帖子",
+        ReportTargetType::Comment => "评论",
+        ReportTargetType::User => "用户",
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn report_status_label(status: &ReportStatus) -> &'static str {
+    match status {
+        ReportStatus::Pending => "待处理",
+        ReportStatus::Handled => "已处理",
+        ReportStatus::Rejected => "已驳回",
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeConfig {
     pub database_url: String,
     pub redis_url: String,
     pub nats_url: String,
     pub rustfs_endpoint: String,
+    pub rustfs_bucket: String,
+    pub rustfs_region: String,
+    pub rustfs_access_key: String,
+    pub rustfs_secret_key: String,
+    pub rustfs_force_path_style: bool,
     pub elasticsearch_url: String,
 }
 
@@ -1641,6 +2026,17 @@ impl RuntimeConfig {
                 .unwrap_or_else(|_| "nats://localhost:4222".to_string()),
             rustfs_endpoint: std::env::var("RUSTFS_ENDPOINT")
                 .unwrap_or_else(|_| "http://localhost:9000".to_string()),
+            rustfs_bucket: std::env::var("RUSTFS_BUCKET")
+                .unwrap_or_else(|_| "post-assets".to_string()),
+            rustfs_region: std::env::var("RUSTFS_REGION")
+                .unwrap_or_else(|_| "us-east-1".to_string()),
+            rustfs_access_key: std::env::var("RUSTFS_ACCESS_KEY")
+                .unwrap_or_else(|_| "rustfsadmin".to_string()),
+            rustfs_secret_key: std::env::var("RUSTFS_SECRET_KEY")
+                .unwrap_or_else(|_| "rustfsadmin".to_string()),
+            rustfs_force_path_style: std::env::var("RUSTFS_FORCE_PATH_STYLE")
+                .map(|value| value == "true" || value == "1")
+                .unwrap_or(true),
             elasticsearch_url: std::env::var("ELASTICSEARCH_URL")
                 .unwrap_or_else(|_| "http://localhost:9200".to_string()),
         }
@@ -2588,6 +2984,15 @@ impl ForumStore {
         Ok(asset)
     }
 
+    pub fn upload_binary_file(
+        &self,
+        uploader_id: Uuid,
+        request: FileBinaryUploadRequest,
+    ) -> Result<FileAsset, ForumError> {
+        let object = request.to_object_upload().map_err(ForumError::Validation)?;
+        self.upload_file(uploader_id, object.asset)
+    }
+
     pub fn update_profile(
         &self,
         user_id: Uuid,
@@ -3229,6 +3634,72 @@ impl ForumStore {
             return Err(ForumError::NotFound);
         }
 
+        Ok(notification_connection_stats(&data, user_id))
+    }
+
+    #[cfg(feature = "ssr")]
+    fn connect_notification_socket_trusted(
+        &self,
+        user_id: Uuid,
+    ) -> Result<NotificationConnectionStats, ForumError> {
+        let mut data = self.write_data()?;
+        *data.notification_connections.entry(user_id).or_default() += 1;
+        Ok(notification_connection_stats(&data, user_id))
+    }
+
+    #[cfg(feature = "ssr")]
+    fn disconnect_notification_socket_trusted(
+        &self,
+        user_id: Uuid,
+    ) -> Result<NotificationConnectionStats, ForumError> {
+        let mut data = self.write_data()?;
+        if let Some(connections) = data.notification_connections.get_mut(&user_id) {
+            *connections = connections.saturating_sub(1);
+            if *connections == 0 {
+                data.notification_connections.remove(&user_id);
+            }
+        }
+        Ok(notification_connection_stats(&data, user_id))
+    }
+
+    #[cfg(feature = "ssr")]
+    fn notification_connection_stats_trusted(
+        &self,
+        user_id: Uuid,
+    ) -> Result<NotificationConnectionStats, ForumError> {
+        let data = self.inner.read().map_err(|_| ForumError::Internal)?;
+        Ok(notification_connection_stats(&data, user_id))
+    }
+
+    #[cfg(feature = "ssr")]
+    fn pending_notification_pushes_trusted(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<NotificationPush>, ForumError> {
+        let data = self.inner.read().map_err(|_| ForumError::Internal)?;
+        Ok(data
+            .pending_notification_pushes
+            .get(&user_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    #[cfg(feature = "ssr")]
+    fn ack_notification_push_trusted(
+        &self,
+        user_id: Uuid,
+        push_id: Uuid,
+    ) -> Result<NotificationConnectionStats, ForumError> {
+        let mut data = self.write_data()?;
+        let pushes = data
+            .pending_notification_pushes
+            .get_mut(&user_id)
+            .ok_or(ForumError::NotFound)?;
+        let before = pushes.len();
+        pushes.retain(|push| push.push_id != push_id);
+        if pushes.len() == before {
+            return Err(ForumError::NotFound);
+        }
         Ok(notification_connection_stats(&data, user_id))
     }
 

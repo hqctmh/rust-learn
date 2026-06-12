@@ -69,6 +69,7 @@ pub struct NotificationConnectionStats {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct NotificationReadRequest {
     pub user_id: Option<Uuid>,
+    pub session_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

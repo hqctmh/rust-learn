@@ -8,7 +8,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = "1.0"
+aws-credential-types = { version = "1.2.14", optional = true }
+aws-sdk-s3 = { version = "1.135.0", optional = true }
 axum = { version = "0.8", features = ["macros", "ws"], optional = true }
+base64 = "0.22"
 console_error_panic_hook = { version = "0.1", optional = true }
 dotenvy = "0.15"
 leptos = { version = "0.8.0" }
@@ -16,6 +19,7 @@ leptos_axum = { version = "0.8.0", optional = true }
 leptos_meta = { version = "0.8.0" }
 leptos_router = { version = "0.8.0" }
 serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
 sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "macros", "time", "uuid"], optional = true }
 thiserror = "2.0"
 time = { version = "0.3", features = ["serde"] }
@@ -34,6 +38,8 @@ hydrate = [
     "dep:wasm-bindgen",
 ]
 ssr = [
+    "dep:aws-credential-types",
+    "dep:aws-sdk-s3",
     "dep:axum",
     "dep:tokio",
     "dep:leptos_axum",

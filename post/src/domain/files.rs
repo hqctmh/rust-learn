@@ -1,4 +1,6 @@
+use base64::prelude::*;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -24,6 +26,23 @@ pub struct FileUploadRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct FileBinaryUploadRequest {
+    pub original_filename: String,
+    pub mime_type: String,
+    pub content_base64: String,
+    pub usage: FileUsage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileObjectUpload {
+    pub bucket: String,
+    pub storage_key: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+    pub asset: FileUploadRequest,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct FileAsset {
     pub file_id: Uuid,
     pub original_filename: String,
@@ -36,6 +55,45 @@ pub struct FileAsset {
     pub public_url: String,
     pub markdown_image: String,
     pub uploaded_at: OffsetDateTime,
+}
+
+impl FileBinaryUploadRequest {
+    pub fn decoded_bytes(&self) -> Result<Vec<u8>, String> {
+        BASE64_STANDARD
+            .decode(self.content_base64.trim())
+            .map_err(|_| "图片内容不是有效的 base64".to_string())
+    }
+
+    pub fn to_upload_request(&self) -> Result<FileUploadRequest, String> {
+        let bytes = self.decoded_bytes()?;
+        self.to_upload_request_from_bytes(&bytes)
+    }
+
+    pub fn to_object_upload(&self) -> Result<FileObjectUpload, String> {
+        let bytes = self.decoded_bytes()?;
+        let asset = self.to_upload_request_from_bytes(&bytes)?;
+        let storage_key = build_storage_key(&asset);
+        Ok(FileObjectUpload {
+            bucket: ASSET_BUCKET.to_string(),
+            storage_key,
+            content_type: asset.mime_type.clone(),
+            bytes,
+            asset,
+        })
+    }
+
+    fn to_upload_request_from_bytes(&self, bytes: &[u8]) -> Result<FileUploadRequest, String> {
+        let file_size = i64::try_from(bytes.len()).map_err(|_| "文件大小超出范围".to_string())?;
+        let request = FileUploadRequest {
+            original_filename: self.original_filename.clone(),
+            file_size,
+            mime_type: self.mime_type.clone(),
+            content_hash: sha256_hex(bytes),
+            usage: self.usage.clone(),
+        };
+        request.validate()?;
+        Ok(request)
+    }
 }
 
 impl FileUploadRequest {
@@ -65,19 +123,7 @@ impl FileUploadRequest {
 
 pub fn build_file_asset(file_id: Uuid, uploader_id: Uuid, request: FileUploadRequest) -> FileAsset {
     let filename = sanitize_filename(&request.original_filename);
-    let usage_path = match request.usage {
-        FileUsage::Avatar => "avatars",
-        FileUsage::CoverImage => "covers",
-        FileUsage::MarkdownImage => "markdown",
-        FileUsage::AnnouncementImage => "announcements",
-    };
-    let hash_prefix = request
-        .content_hash
-        .chars()
-        .filter(|value| value.is_ascii_alphanumeric())
-        .take(12)
-        .collect::<String>();
-    let storage_key = format!("{usage_path}/{hash_prefix}/{filename}");
+    let storage_key = build_storage_key(&request);
     let public_url = format!("/uploads/{storage_key}");
 
     FileAsset {
@@ -97,6 +143,32 @@ pub fn build_file_asset(file_id: Uuid, uploader_id: Uuid, request: FileUploadReq
 
 pub fn is_allowed_image_mime(mime_type: &str) -> bool {
     matches!(mime_type, "image/png" | "image/jpeg" | "image/webp")
+}
+
+fn build_storage_key(request: &FileUploadRequest) -> String {
+    let filename = sanitize_filename(&request.original_filename);
+    let usage_path = match request.usage {
+        FileUsage::Avatar => "avatars",
+        FileUsage::CoverImage => "covers",
+        FileUsage::MarkdownImage => "markdown",
+        FileUsage::AnnouncementImage => "announcements",
+    };
+    let hash_prefix = request
+        .content_hash
+        .chars()
+        .filter(|value| value.is_ascii_alphanumeric())
+        .take(12)
+        .collect::<String>();
+    format!("{usage_path}/{hash_prefix}/{filename}")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
 }
 
 fn sanitize_filename(filename: &str) -> String {
