@@ -4,7 +4,7 @@ use leptos::prelude::*;
 pub fn TopNav() -> impl IntoView {
     view! {
         <header class="sticky top-0 z-20 border-b border-base-300 bg-base-100/95 backdrop-blur">
-            <div class="navbar mx-auto max-w-[1440px] gap-5 px-6">
+            <div class="navbar mx-auto max-w-[1440px] flex-wrap gap-4 px-5">
                 <a class="brand-link" href="/">
                     <span class="brand-mark">"P"</span>
                     "Post Forum"
@@ -17,7 +17,7 @@ pub fn TopNav() -> impl IntoView {
                     <a class="top-tab" href="/?tab=docs">"文档"</a>
                     <a class="top-tab" href="/?tab=events">"活动"</a>
                 </nav>
-                <form class="search-pill ml-auto hidden w-full max-w-md items-center gap-2 md:flex" action="/search" method="get">
+                <form class="search-pill ml-auto hidden min-w-0 w-full max-w-md items-center gap-2 md:flex" action="/search" method="get">
                     <span class="icon-text" aria-hidden="true">"⌕"</span>
                     <input name="q" type="search" class="grow" placeholder="搜索帖子、标签、用户..."/>
                     <kbd class="kbd kbd-sm">"/"</kbd>

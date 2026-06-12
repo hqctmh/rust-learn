@@ -19,6 +19,10 @@ use crate::{
         home::{
             HomeAnnouncement, HomeCategory, HomePageData, HomeQuery, HomeTag, dense_workbench_home,
         },
+        integrations::{
+            IntegrationAction, announcement_published_actions, post_comment_changed_actions,
+            post_published_actions,
+        },
         moderation::{
             ModerationCommentAction, ModerationCommentRow, ModerationPostAction, ModerationPostRow,
         },
@@ -75,11 +79,12 @@ use crate::repositories::{
     announcements::PostgresAnnouncementRepository, auth::PostgresAuthRepository,
     comments::PostgresCommentRepository, files::PostgresFileRepository,
     follows::PostgresFollowRepository, home::PostgresHomeRepository,
-    moderation::PostgresModerationRepository, notifications::PostgresNotificationRepository,
-    posts::PostgresPostRepository, rbac::PostgresRbacRepository,
-    reactions::PostgresReactionRepository, reports::PostgresReportRepository,
-    search::PostgresSearchRepository, taxonomy::PostgresTaxonomyRepository,
-    user_admin::PostgresUserAdminRepository, users::PostgresUserSettingsRepository,
+    integrations::PostgresIntegrationRepository, moderation::PostgresModerationRepository,
+    notifications::PostgresNotificationRepository, posts::PostgresPostRepository,
+    rbac::PostgresRbacRepository, reactions::PostgresReactionRepository,
+    reports::PostgresReportRepository, search::PostgresSearchRepository,
+    taxonomy::PostgresTaxonomyRepository, user_admin::PostgresUserAdminRepository,
+    users::PostgresUserSettingsRepository,
 };
 
 #[cfg(feature = "ssr")]
@@ -250,6 +255,9 @@ impl AppState {
             .map_err(|_| ForumError::Internal)?;
 
         if detail.status == PostStatus::Published {
+            PostgresIntegrationRepository::insert_actions(pool, &post_published_actions(&detail))
+                .await
+                .map_err(|_| ForumError::Internal)?;
             let followers = PostgresNotificationRepository::followers_for_user(pool, author_id)
                 .await
                 .map_err(|_| ForumError::Internal)?;
@@ -415,6 +423,14 @@ impl AppState {
         )?;
 
         PostgresCommentRepository::insert_comment(pool, &comment)
+            .await
+            .map_err(|_| ForumError::Internal)?;
+        let post_snapshot = PostgresPostRepository::find_detail(pool, request.post_id)
+            .await
+            .map_err(|_| ForumError::Internal)?
+            .ok_or(ForumError::NotFound)?;
+        let actions = post_comment_changed_actions(&post_snapshot, comment.comment_id);
+        PostgresIntegrationRepository::insert_actions(pool, &actions)
             .await
             .map_err(|_| ForumError::Internal)?;
 
@@ -733,6 +749,10 @@ impl AppState {
         if rows_affected == 0 {
             return Err(ForumError::NotFound);
         }
+        let actions = announcement_published_actions(&announcement);
+        PostgresIntegrationRepository::insert_actions(pool, &actions)
+            .await
+            .map_err(|_| ForumError::Internal)?;
 
         Ok(announcement)
     }
@@ -2013,6 +2033,10 @@ pub struct RuntimeConfig {
     pub rustfs_secret_key: String,
     pub rustfs_force_path_style: bool,
     pub elasticsearch_url: String,
+    pub integration_worker_enabled: bool,
+    pub integration_worker_batch_size: i64,
+    pub integration_worker_max_attempts: i32,
+    pub integration_worker_interval_millis: u64,
 }
 
 impl RuntimeConfig {
@@ -2039,6 +2063,24 @@ impl RuntimeConfig {
                 .unwrap_or(true),
             elasticsearch_url: std::env::var("ELASTICSEARCH_URL")
                 .unwrap_or_else(|_| "http://localhost:9200".to_string()),
+            integration_worker_enabled: std::env::var("INTEGRATION_WORKER_ENABLED")
+                .map(|value| value == "true" || value == "1")
+                .unwrap_or(false),
+            integration_worker_batch_size: std::env::var("INTEGRATION_WORKER_BATCH_SIZE")
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(50),
+            integration_worker_max_attempts: std::env::var("INTEGRATION_WORKER_MAX_ATTEMPTS")
+                .ok()
+                .and_then(|value| value.parse::<i32>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(3),
+            integration_worker_interval_millis: std::env::var("INTEGRATION_WORKER_INTERVAL_MILLIS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(1_000),
         }
     }
 }
@@ -2062,6 +2104,7 @@ struct ForumData {
     notifications: HashMap<Uuid, Vec<Notification>>,
     notification_connections: HashMap<Uuid, usize>,
     pending_notification_pushes: HashMap<Uuid, Vec<NotificationPush>>,
+    integration_actions: Vec<IntegrationAction>,
     announcements: HashMap<Uuid, AnnouncementItem>,
     announcement_reads: HashSet<(Uuid, Uuid)>,
     reports: HashMap<Uuid, ReportItem>,
@@ -2156,6 +2199,7 @@ impl ForumStore {
                 notifications: HashMap::new(),
                 notification_connections: HashMap::new(),
                 pending_notification_pushes: HashMap::new(),
+                integration_actions: Vec::new(),
                 announcements: HashMap::new(),
                 announcement_reads: HashSet::new(),
                 reports: HashMap::new(),
@@ -2279,6 +2323,14 @@ impl ForumStore {
             .collect()
     }
 
+    pub fn integration_actions(&self) -> Vec<IntegrationAction> {
+        self.inner
+            .read()
+            .expect("forum store lock")
+            .integration_actions
+            .clone()
+    }
+
     pub fn home_page(
         &self,
         query: HomeQuery,
@@ -2398,6 +2450,8 @@ impl ForumStore {
                 AnnouncementService::notification_body(&published.content),
             );
         }
+        data.integration_actions
+            .extend(announcement_published_actions(&published));
         Ok(published)
     }
 
@@ -3283,6 +3337,8 @@ impl ForumStore {
         data.posts.insert(post_id, detail.clone());
 
         if publish {
+            data.integration_actions
+                .extend(post_published_actions(&detail));
             for (follower_id, followee_id) in data.follows.clone() {
                 if followee_id == author_id && follower_id != author_id {
                     push_notification(
@@ -3337,9 +3393,12 @@ impl ForumStore {
             comments.push(comment.clone());
         }
 
-        if let Some(post) = data.posts.get_mut(&request.post_id) {
+        let post_snapshot = if let Some(post) = data.posts.get_mut(&request.post_id) {
             post.summary.comment_count += 1;
-        }
+            Some(post.clone())
+        } else {
+            None
+        };
 
         if author_id != post_author_id {
             push_notification(
@@ -3354,6 +3413,13 @@ impl ForumStore {
                 format!("{author_name} 评论了你的帖子"),
                 CommentService::notification_body(&comment.content),
             );
+        }
+        if let Some(post_snapshot) = post_snapshot {
+            data.integration_actions
+                .extend(post_comment_changed_actions(
+                    &post_snapshot,
+                    comment.comment_id,
+                ));
         }
         Ok(comment)
     }

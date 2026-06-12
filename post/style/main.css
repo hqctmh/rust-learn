@@ -66,12 +66,14 @@ button {
 .p-4 { padding: 1rem; }
 .p-5 { padding: 1.25rem; }
 .p-6 { padding: 1.5rem; }
+.px-5 { padding-left: 1.25rem; padding-right: 1.25rem; }
 .px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
 .py-8 { padding-top: 2rem; padding-bottom: 2rem; }
 .flex { display: flex; }
 .grid { display: grid; }
 .hidden { display: none; }
 .grow { flex: 1 1 auto; }
+.flex-wrap { flex-wrap: wrap; }
 .min-w-0 { min-width: 0; }
 .items-center { align-items: center; }
 .justify-between { justify-content: space-between; }
@@ -96,6 +98,7 @@ button {
 
 .navbar {
   display: flex;
+  flex-wrap: wrap;
   min-height: 68px;
   align-items: center;
 }

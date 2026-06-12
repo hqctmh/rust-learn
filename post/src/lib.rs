@@ -5,6 +5,12 @@ pub mod components;
 pub mod domain;
 pub mod error;
 #[cfg(feature = "ssr")]
+pub mod integration_handler;
+#[cfg(feature = "ssr")]
+pub mod integration_runtime;
+#[cfg(feature = "ssr")]
+pub mod integration_worker;
+#[cfg(feature = "ssr")]
 pub mod object_store;
 pub mod page_data;
 pub mod pages;

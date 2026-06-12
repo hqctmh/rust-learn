@@ -7,7 +7,8 @@ async fn main() -> anyhow::Result<()> {
     use leptos_axum::{LeptosRoutes, generate_route_list};
     use post::api;
     use post::app::{App, shell};
-    use post::state::{AppState, ForumStore};
+    use post::integration_runtime::spawn_integration_outbox_worker;
+    use post::state::{AppState, ForumStore, RuntimeConfig};
 
     dotenvy::dotenv().ok();
 
@@ -16,9 +17,9 @@ async fn main() -> anyhow::Result<()> {
     let leptos_options = conf.leptos_options;
     let routes = generate_route_list(App);
     let forum_store = ForumStore::seeded();
-    let db = std::env::var("DATABASE_URL")
-        .ok()
-        .and_then(|url| sqlx::PgPool::connect_lazy(&url).ok());
+    let runtime_config = RuntimeConfig::from_env();
+    let db = sqlx::PgPool::connect_lazy(&runtime_config.database_url).ok();
+    let _integration_worker = spawn_integration_outbox_worker(db.clone(), runtime_config);
     let app_state = AppState {
         db,
         forum: forum_store,

@@ -71,6 +71,24 @@ fn primary_ssr_pages_load_operational_data_through_server_state() {
 }
 
 #[test]
+fn top_navigation_layout_prevents_horizontal_overflow() {
+    let component_source =
+        std::fs::read_to_string("src/components/mod.rs").expect("read component source");
+    let style_source = std::fs::read_to_string("style/main.css").expect("read stylesheet");
+
+    assert!(
+        component_source.contains("navbar")
+            && component_source.contains("flex-wrap")
+            && component_source.contains("min-w-0"),
+        "top navigation should allow the search area and action buttons to shrink or wrap instead of overflowing"
+    );
+    assert!(
+        style_source.contains(".navbar") && style_source.contains("flex-wrap: wrap"),
+        "navbar CSS should explicitly allow wrapping at constrained desktop widths"
+    );
+}
+
+#[test]
 fn search_page_preserves_url_query_parameters() {
     let source = std::fs::read_to_string("src/pages/search.rs").expect("read search page source");
 
@@ -3094,6 +3112,339 @@ fn compose_declares_required_prd_services() {
 }
 
 #[test]
+fn infrastructure_integration_actions_cover_cache_events_and_search_index() {
+    let integration_source = std::fs::read_to_string("src/domain/integrations.rs")
+        .expect("integration action domain should exist");
+    let state_source = std::fs::read_to_string("src/state.rs").expect("read state source");
+
+    for required in [
+        "pub enum IntegrationAction",
+        "CacheInvalidate(CacheInvalidation)",
+        "NatsPublish(IntegrationEvent)",
+        "SearchIndex(SearchIndexMutation)",
+        "pub struct SearchIndexDocument",
+        "post_published_actions",
+        "post_comment_changed_actions",
+        "announcement_published_actions",
+    ] {
+        assert!(
+            integration_source.contains(required),
+            "missing integration action contract fragment: {required}"
+        );
+    }
+
+    for required in [
+        "integration_actions: Vec<IntegrationAction>",
+        "pub fn integration_actions(&self) -> Vec<IntegrationAction>",
+        "post_published_actions(&detail)",
+        "post_comment_changed_actions(",
+        "&post_snapshot",
+        "comment.comment_id",
+        "announcement_published_actions(&published)",
+    ] {
+        assert!(
+            state_source.contains(required),
+            "missing ForumStore integration hook: {required}"
+        );
+    }
+}
+
+#[test]
+fn postgres_integration_outbox_persists_runtime_actions_with_sqlx_macros() {
+    let migration = std::fs::read_to_string("migrations/202606120002_integration_outbox.sql")
+        .expect("integration outbox migration should exist");
+    let repository_source = std::fs::read_to_string("src/repositories/integrations.rs")
+        .expect("PostgreSQL integration repository should exist");
+    let repositories_mod =
+        std::fs::read_to_string("src/repositories/mod.rs").expect("read repositories module");
+    let state_source = std::fs::read_to_string("src/state.rs").expect("read state source");
+
+    for required in [
+        "create table if not exists integration_outbox",
+        "outbox_id uuid primary key",
+        "action_kind text not null",
+        "payload text not null",
+        "status text not null default 'pending'",
+        "created_at timestamptz not null default now()",
+        "integration_outbox_pending_idx",
+    ] {
+        assert!(
+            migration.contains(required),
+            "missing integration outbox migration fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub struct IntegrationOutboxRow",
+        "pub struct PostgresIntegrationRepository",
+        "pub async fn insert_actions",
+        "pub async fn list_pending",
+        "pub async fn mark_processed",
+        "sqlx::query_as!(",
+        "sqlx::query!(",
+        "insert into integration_outbox",
+        "returning",
+        "from integration_outbox",
+        "where status = 'pending'",
+        "set status = 'processed'",
+    ] {
+        assert!(
+            repository_source.contains(required),
+            "missing PostgreSQL integration repository fragment: {required}"
+        );
+    }
+
+    assert!(repositories_mod.contains("pub mod integrations;"));
+    assert!(state_source.contains("integrations::PostgresIntegrationRepository"));
+    assert!(state_source.contains("PostgresIntegrationRepository::insert_actions"));
+    assert!(state_source.contains("post_published_actions(&detail)"));
+    assert!(state_source.contains("post_comment_changed_actions(&post_snapshot"));
+    assert!(state_source.contains("announcement_published_actions(&announcement)"));
+}
+
+#[test]
+fn integration_outbox_worker_drains_pending_rows_and_records_failures() {
+    let repository_source = std::fs::read_to_string("src/repositories/integrations.rs")
+        .expect("PostgreSQL integration repository should exist");
+    let worker_source =
+        std::fs::read_to_string("src/integration_worker.rs").expect("outbox worker should exist");
+    let lib_source = std::fs::read_to_string("src/lib.rs").expect("read library module");
+
+    for required in [
+        "pub async fn mark_failed",
+        "attempts = attempts + 1",
+        "last_error = $2",
+        "case when attempts + 1 >= $3 then 'failed' else 'pending' end",
+        "and status = 'pending'",
+        "sqlx::query!(",
+    ] {
+        assert!(
+            repository_source.contains(required),
+            "missing outbox failure repository fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub trait IntegrationActionHandler",
+        "pub struct IntegrationOutboxWorker",
+        "pub struct IntegrationDrainReport",
+        "pub async fn drain_once",
+        "PostgresIntegrationRepository::list_pending",
+        "self.handler.handle(&row).await",
+        "PostgresIntegrationRepository::mark_processed",
+        "PostgresIntegrationRepository::mark_failed",
+        "processed += 1",
+        "failed += 1",
+    ] {
+        assert!(
+            worker_source.contains(required),
+            "missing integration outbox worker fragment: {required}"
+        );
+    }
+
+    assert!(lib_source.contains("pub mod integration_worker;"));
+}
+
+struct TestIntegrationHandler {
+    fail_subject: String,
+}
+
+impl post::integration_worker::IntegrationActionHandler for TestIntegrationHandler {
+    fn handle<'a>(
+        &'a self,
+        row: &'a post::repositories::integrations::IntegrationOutboxRow,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            if row.subject == self.fail_subject {
+                Err("handler failed".to_string())
+            } else {
+                Ok(())
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn integration_outbox_worker_processes_successes_and_records_retriable_failures() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    for row in
+        post::repositories::integrations::PostgresIntegrationRepository::list_pending(&pool, 500)
+            .await
+            .expect("list existing pending outbox rows")
+    {
+        post::repositories::integrations::PostgresIntegrationRepository::mark_processed(
+            &pool,
+            row.outbox_id,
+        )
+        .await
+        .expect("clear pending outbox row before test");
+    }
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let success_subject = format!("worker-success-{suffix}");
+    let fail_subject = format!("worker-failure-{suffix}");
+    post::repositories::integrations::PostgresIntegrationRepository::insert_actions(
+        &pool,
+        &[
+            post::domain::integrations::IntegrationAction::CacheInvalidate(
+                post::domain::integrations::CacheInvalidation {
+                    keys: vec![format!("success:{suffix}")],
+                    reason: success_subject.clone(),
+                },
+            ),
+            post::domain::integrations::IntegrationAction::CacheInvalidate(
+                post::domain::integrations::CacheInvalidation {
+                    keys: vec![format!("failure:{suffix}")],
+                    reason: fail_subject.clone(),
+                },
+            ),
+        ],
+    )
+    .await
+    .expect("insert outbox actions");
+
+    let worker = post::integration_worker::IntegrationOutboxWorker::new(
+        TestIntegrationHandler {
+            fail_subject: fail_subject.clone(),
+        },
+        10,
+        3,
+    );
+    let report = worker.drain_once(&pool).await.expect("drain outbox once");
+
+    assert!(report.scanned >= 2);
+    assert!(report.processed >= 1);
+    assert_eq!(report.failed, 1);
+
+    let pending =
+        post::repositories::integrations::PostgresIntegrationRepository::list_pending(&pool, 50)
+            .await
+            .expect("list pending after drain");
+    assert!(
+        pending.iter().all(|row| row.subject != success_subject),
+        "successful action should be marked processed"
+    );
+    let failed = pending
+        .iter()
+        .find(|row| row.subject == fail_subject)
+        .expect("failed action should remain pending for retry");
+    assert_eq!(failed.attempts, 1);
+    assert_eq!(failed.last_error.as_deref(), Some("handler failed"));
+}
+
+#[test]
+fn runtime_integration_handler_uses_real_redis_nats_and_elasticsearch_clients() {
+    let manifest = std::fs::read_to_string("Cargo.toml").expect("read manifest");
+    let handler_source = std::fs::read_to_string("src/integration_handler.rs")
+        .expect("runtime handler should exist");
+    let repository_source = std::fs::read_to_string("src/repositories/integrations.rs")
+        .expect("read integration repository");
+    let lib_source = std::fs::read_to_string("src/lib.rs").expect("read library module");
+
+    for required in [
+        "redis =",
+        "features = [\"tokio-comp\"]",
+        "async-nats =",
+        "elasticsearch =",
+        "serde_json =",
+        "\"dep:redis\"",
+        "\"dep:async-nats\"",
+        "\"dep:elasticsearch\"",
+        "\"dep:serde_json\"",
+    ] {
+        assert!(
+            manifest.contains(required),
+            "missing manifest fragment: {required}"
+        );
+    }
+
+    for required in [
+        "serde_json::json!",
+        "\"kind\": \"cache_invalidate\"",
+        "\"kind\": \"nats_publish\"",
+        "\"kind\": \"search_upsert\"",
+        "\"kind\": \"search_delete\"",
+    ] {
+        assert!(
+            repository_source.contains(required),
+            "outbox payload should be JSON and include fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub struct RuntimeIntegrationHandler",
+        "pub async fn from_config",
+        "redis::Client::open",
+        "get_multiplexed_async_connection()",
+        "async_nats::connect",
+        "Transport::single_node",
+        "Elasticsearch::new",
+        "impl IntegrationActionHandler for RuntimeIntegrationHandler",
+        "redis::cmd(\"DEL\")",
+        ".publish(row.subject.clone(), row.payload.clone().into())",
+        "IndexParts::IndexId",
+        "DeleteParts::IndexId",
+        "serde_json::from_str",
+    ] {
+        assert!(
+            handler_source.contains(required),
+            "missing runtime integration handler fragment: {required}"
+        );
+    }
+
+    assert!(lib_source.contains("pub mod integration_handler;"));
+}
+
+#[test]
+fn integration_outbox_worker_runtime_starts_from_main_when_enabled() {
+    let runtime_source = std::fs::read_to_string("src/integration_runtime.rs")
+        .expect("integration runtime should exist");
+    let state_source = std::fs::read_to_string("src/state.rs").expect("read state source");
+    let main_source = std::fs::read_to_string("src/main.rs").expect("read main source");
+    let lib_source = std::fs::read_to_string("src/lib.rs").expect("read library module");
+
+    for required in [
+        "pub integration_worker_enabled: bool",
+        "pub integration_worker_batch_size: i64",
+        "pub integration_worker_max_attempts: i32",
+        "pub integration_worker_interval_millis: u64",
+        "INTEGRATION_WORKER_ENABLED",
+        "INTEGRATION_WORKER_BATCH_SIZE",
+        "INTEGRATION_WORKER_MAX_ATTEMPTS",
+        "INTEGRATION_WORKER_INTERVAL_MILLIS",
+    ] {
+        assert!(
+            state_source.contains(required),
+            "missing runtime config integration worker fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub fn spawn_integration_outbox_worker",
+        "RuntimeIntegrationHandler::from_config",
+        "IntegrationOutboxWorker::new",
+        "tokio::spawn(async move",
+        "tokio::time::interval",
+        "Duration::from_millis",
+        "config.integration_worker_interval_millis",
+        "interval.tick().await",
+        "worker.drain_once(&pool).await",
+        "integration worker disabled",
+    ] {
+        assert!(
+            runtime_source.contains(required),
+            "missing integration runtime fragment: {required}"
+        );
+    }
+
+    assert!(lib_source.contains("pub mod integration_runtime;"));
+    assert!(main_source.contains("RuntimeConfig::from_env()"));
+    assert!(main_source.contains("spawn_integration_outbox_worker("));
+}
+
+#[test]
 fn home_seed_content_exposes_forum_workflow() {
     let text = post::app::home_seed_text();
 
@@ -3399,6 +3750,29 @@ fn notification_routes_are_registered() {
     assert!(routes.contains(&"/api/notifications"));
     assert!(routes.contains(&"/api/notifications/{notification_id}/read"));
     assert!(routes.contains(&"/api/notifications/read-all"));
+}
+
+#[test]
+fn notification_fallback_data_is_wasm_hydration_safe() {
+    let source = std::fs::read_to_string("src/domain/notifications.rs")
+        .expect("read notification domain source");
+    let start = source
+        .find("pub fn notification_demo_center")
+        .expect("notification demo center should exist");
+    let end = source[start..]
+        .find("pub fn unread_count")
+        .expect("notification demo center should end before unread_count")
+        + start;
+    let demo_source = &source[start..end];
+
+    assert!(
+        !demo_source.contains("OffsetDateTime::now_utc()"),
+        "notification fallback data is rendered during wasm hydration and must not call system time"
+    );
+    assert!(
+        demo_source.contains("from_unix_timestamp"),
+        "notification fallback data should use deterministic timestamps"
+    );
 }
 
 #[test]

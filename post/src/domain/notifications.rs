@@ -85,7 +85,8 @@ pub struct UnreadCount {
 
 pub fn notification_demo_center() -> NotificationCenter {
     let recipient_id = Uuid::from_u128(1);
-    let now = OffsetDateTime::now_utc();
+    let now = OffsetDateTime::from_unix_timestamp(1_717_996_800)
+        .expect("fixed notification demo timestamp");
     let items = vec![
         Notification {
             notification_id: Uuid::from_u128(9001),

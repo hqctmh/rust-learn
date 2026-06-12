@@ -4,6 +4,7 @@ pub mod auth;
 pub mod comments;
 pub mod files;
 pub mod home;
+pub mod integrations;
 pub mod moderation;
 pub mod notifications;
 pub mod posts;

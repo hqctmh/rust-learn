@@ -8,6 +8,8 @@
 
 **Tech Stack:** Rust 2024, Leptos 0.8 Router, Axum 0.8 `Query<T>`, Serde, existing `ForumStore`, existing contract tests.
 
+**Task Status:** Completed and verified on 2026-06-12.
+
 ---
 
 ## Scope
@@ -21,7 +23,7 @@ This slice does not integrate Elasticsearch yet. It establishes the product and 
 **Files:**
 - Modify: `post/tests/phase1_contract.rs`
 
-- [ ] Add tests that assert:
+- [x] Add tests that assert:
   - `ForumStore::search(SearchQuery { q: "sqlx" })` returns post results and highlights `sqlx`.
   - category and tag filters narrow results.
   - hot sorting orders by `score` descending.
@@ -34,9 +36,9 @@ This slice does not integrate Elasticsearch yet. It establishes the product and 
 - Create: `post/src/domain/search.rs`
 - Modify: `post/src/domain/mod.rs`
 
-- [ ] Add `SearchQuery`, `SearchSort`, `SearchResultKind`, `SearchResultItem`, `SearchResultPage`.
-- [ ] Add `search_dense_workbench(SearchQuery) -> SearchResultPage`.
-- [ ] Reuse homepage seed data through public `dense_workbench_topics()` to avoid duplicating topic records.
+- [x] Add `SearchQuery`, `SearchSort`, `SearchResultKind`, `SearchResultItem`, `SearchResultPage`.
+- [x] Add `search_dense_workbench(SearchQuery) -> SearchResultPage`.
+- [x] Reuse homepage seed data through public `dense_workbench_topics()` to avoid duplicating topic records.
 
 ### Task 3: Store and API
 
@@ -45,9 +47,9 @@ This slice does not integrate Elasticsearch yet. It establishes the product and 
 - Modify: `post/src/api.rs`
 - Modify: `post/src/app.rs`
 
-- [ ] Add `ForumStore::search(query: SearchQuery) -> Result<SearchResultPage, ForumError>`.
-- [ ] Add `GET /api/search` with resilient query parsing.
-- [ ] Add `/api/search` to API inventory and `/search` to primary routes.
+- [x] Add `ForumStore::search(query: SearchQuery) -> Result<SearchResultPage, ForumError>`.
+- [x] Add `GET /api/search` with resilient query parsing.
+- [x] Add `/api/search` to API inventory and `/search` to primary routes.
 
 ### Task 4: Search Page and Navigation
 
@@ -58,25 +60,32 @@ This slice does not integrate Elasticsearch yet. It establishes the product and 
 - Modify: `post/src/components/mod.rs`
 - Modify: `post/style/main.css`
 
-- [ ] Add `/search` route.
-- [ ] Add `SearchPage` rendering query input, result count, filter controls, and result list.
-- [ ] Change top-nav search input into a GET form that submits to `/search`.
-- [ ] Keep visual style aligned with Dense Workbench: restrained panels, compact result rows, blue highlight chips.
+- [x] Add `/search` route.
+- [x] Add `SearchPage` rendering query input, result count, filter controls, and result list.
+- [x] Change top-nav search input into a GET form that submits to `/search`.
+- [x] Keep visual style aligned with Dense Workbench: restrained panels, compact result rows, blue highlight chips.
 
 ### Task 5: Verification
 
 **Files:**
 - No new files.
 
-- [ ] Run `cargo fmt`.
-- [ ] Run `cargo test`.
-- [ ] Run `cargo check`.
-- [ ] Run `cargo leptos build`.
-- [ ] Check IDEA error-level problems for changed Rust/test files.
-- [ ] Browser verify `/search?q=sqlx` shows highlighted search results and no horizontal overflow.
+- [x] Run `cargo fmt`.
+- [x] Run `cargo test`.
+- [x] Run `cargo check`.
+- [x] Run `cargo leptos build`.
+- [x] IDEA error check not required by project instruction.
+- [x] Browser verify `/search?q=sqlx` shows highlighted search results and no horizontal overflow.
 
 ## Self-Review
 
 - Covers PRD 4.9 keyword search, category/tag filters, hot/time sort, result highlight, and search result page.
 - Keeps Elasticsearch as an explicit future backend replacement while making the current system runnable.
 - No placeholders remain.
+
+## Current verification evidence (2026-06-12)
+
+- `cargo test --manifest-path post/Cargo.toml`: PASS, 103 passed.
+- `cargo check --manifest-path post/Cargo.toml`: PASS.
+- `cargo leptos build`: PASS.
+- Browser verification at `/search?q=sqlx`: PASS; keyword content exists, 10 `<mark>` highlights rendered, `scrollWidth=1280`, `clientWidth=1280`, no new console errors.

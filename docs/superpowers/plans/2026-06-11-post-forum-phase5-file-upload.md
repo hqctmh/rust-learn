@@ -6,7 +6,7 @@
 
 **Architecture:** Add `domain::files` for upload request/metadata/limits. `ForumStore` stores file metadata in memory and validates uploader, MIME type, and size. `POST /api/files` accepts JSON metadata for the demo path and returns a `FileAsset` with bucket/key/hash/url fields. `POST /api/files/binary` accepts base64 image bytes, computes server-side SHA-256, validates the derived metadata, writes the object through a RustFS/S3-compatible adapter in PostgreSQL runtime mode, and returns the same Markdown-ready `FileAsset`.
 
-**Tech Stack:** Rust 2024, Axum 0.8 JSON API, Leptos 0.8, existing in-memory `ForumStore`, RustFS through the S3-compatible `rust-s3` client.
+**Tech Stack:** Rust 2024, Axum 0.8 JSON API, Leptos 0.8, existing in-memory `ForumStore`, RustFS through the S3-compatible `aws-sdk-s3 = "1.135.0"` client.
 
 ---
 
@@ -68,7 +68,7 @@ This slice does not stream multipart content yet. It implements the validation, 
 - `cargo test --manifest-path post/Cargo.toml file_`: PASS, 8 passed.
 - `cargo test --manifest-path post/Cargo.toml rustfs_object_store_adapter_contract_uses_s3_put_object`: PASS, 1 passed.
 - `cargo fmt --manifest-path post/Cargo.toml`: PASS.
-- `cargo test --manifest-path post/Cargo.toml`: PASS, 100 passed.
+- `cargo test --manifest-path post/Cargo.toml`: PASS, 103 passed.
 - `cargo check --manifest-path post/Cargo.toml`: PASS.
 - `cargo leptos build`: PASS. First sandbox run failed on Cargo registry cache permission for `web-time-1.1.0.crate`; non-sandbox rerun completed successfully.
 - Project instruction says this project does not need IDEA MCP problem checks.
@@ -78,3 +78,7 @@ This slice does not stream multipart content yet. It implements the validation, 
 - RustFS object verification: PASS; `post-rustfs:/data/post-assets/markdown/2cf24dba5fb0/rustfs-unique-3117bde0.png/xl.meta` exists.
 - PostgreSQL metadata verification: PASS; `file_assets` row exists for `77c145df-a405-4cea-b67c-66c678f143f7`.
 - Browser editor verification at `/posts/new`: PASS; page shows Markdown editor and upload contract text for RustFS storage, MIME validation, file size limit, and Markdown image link generation.
+- `aws-sdk-s3` default feature configuration verification: PASS; `post/Cargo.toml` uses `aws-sdk-s3 = { version = "1.135.0", optional = true }`, with `aws-smithy-eventstream` locked to `0.60.20` to avoid the `aws-runtime v1.7.4` E0282 compile issue seen with `0.60.21`.
+- API upload verification through `POST /api/files/binary?user_id=0979af79-f821-43f1-842f-8dc94ae2e226`: PASS; returned `file_id=3588e0c1-978f-4fa7-926f-f43c6ee79bd5`, `storage_key=markdown/7ef42b07f828/aws-sdk-s3-default-6f2b8e.png`.
+- RustFS object verification for AWS SDK upload: PASS; `post-rustfs:/data/post-assets/markdown/7ef42b07f828/aws-sdk-s3-default-6f2b8e.png/xl.meta` exists.
+- PostgreSQL metadata verification for AWS SDK upload: PASS; `file_assets` row exists for `3588e0c1-978f-4fa7-926f-f43c6ee79bd5`.
