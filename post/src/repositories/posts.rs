@@ -1,7 +1,10 @@
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::domain::posts::{PostDetail, PostStatus, PostSummary};
+use crate::domain::{
+    home::{HomeQuery, HomeSort, HomeTab, HomeTimeRange},
+    posts::{PostDetail, PostStatus, PostSummary},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
 pub struct PostSummaryRow {
@@ -18,6 +21,12 @@ pub struct PostSummaryRow {
     pub like_count: i64,
     pub favorite_count: i64,
     pub published_at: Option<OffsetDateTime>,
+    pub last_reply_author_name: Option<String>,
+    pub last_reply_author_avatar_url: Option<String>,
+    pub last_reply_at: Option<OffsetDateTime>,
+    pub pinned: bool,
+    pub locked: bool,
+    pub read_by_me: bool,
 }
 
 impl From<PostSummaryRow> for PostSummary {
@@ -36,6 +45,12 @@ impl From<PostSummaryRow> for PostSummary {
             like_count: row.like_count,
             favorite_count: row.favorite_count,
             published_at: row.published_at,
+            last_reply_author_name: row.last_reply_author_name,
+            last_reply_author_avatar_url: row.last_reply_author_avatar_url,
+            last_reply_at: row.last_reply_at,
+            pinned: row.pinned,
+            locked: row.locked,
+            read_by_me: row.read_by_me,
         }
     }
 }
@@ -58,6 +73,8 @@ pub struct PostDetailRow {
     pub markdown: String,
     pub sanitized_html: String,
     pub status: String,
+    pub pinned: bool,
+    pub locked: bool,
 }
 
 impl From<PostDetailRow> for PostDetail {
@@ -77,10 +94,17 @@ impl From<PostDetailRow> for PostDetail {
                 like_count: row.like_count,
                 favorite_count: row.favorite_count,
                 published_at: row.published_at,
+                last_reply_author_name: None,
+                last_reply_author_avatar_url: None,
+                last_reply_at: None,
+                pinned: row.pinned,
+                locked: row.locked,
+                read_by_me: false,
             },
             markdown: row.markdown,
             sanitized_html: row.sanitized_html,
             status: post_status_from_str(&row.status),
+            locked: row.locked,
             liked_by_me: false,
             favorited_by_me: false,
             following_author: false,
@@ -115,12 +139,31 @@ select
     p.comment_count,
     p.like_count,
     p.favorite_count,
-    p.published_at
+    p.published_at,
+    lr.author_name as "last_reply_author_name?",
+    lr.author_avatar_url as "last_reply_author_avatar_url?",
+    lr.replied_at as "last_reply_at?",
+    p.is_pinned as pinned,
+    p.is_locked as locked,
+    pr.user_id is not null as read_by_me
 from posts p
 join users u on u.user_id = p.author_id
 left join categories c on c.category_id = p.category_id
 left join post_tags pt on pt.post_id = p.post_id
 left join tags t on t.tag_id = pt.tag_id
+left join lateral (
+    select
+        cu.nickname as author_name,
+        cu.avatar_url as author_avatar_url,
+        lc.created_at as replied_at
+    from comments lc
+    join users cu on cu.user_id = lc.author_id
+    where lc.post_id = p.post_id
+      and lc.status = 'visible'
+    order by lc.created_at desc, lc.comment_id desc
+    limit 1
+) lr on true
+left join post_reads pr on pr.post_id = p.post_id and pr.user_id = $3
 where p.status = 'published'
 group by
     p.post_id,
@@ -135,7 +178,12 @@ group by
     p.like_count,
     p.favorite_count,
     p.published_at,
+    lr.author_name,
+    lr.author_avatar_url,
+    lr.replied_at,
     p.is_pinned,
+    p.is_locked,
+    pr.user_id,
     p.created_at
 order by p.is_pinned desc, p.published_at desc nulls last, p.created_at desc
 limit $1 offset $2
@@ -160,7 +208,9 @@ select
     p.published_at,
     pc.markdown,
     pc.sanitized_html,
-    p.status
+    p.status,
+    p.is_pinned as "pinned!",
+    p.is_locked as "locked!"
 from posts p
 join users u on u.user_id = p.author_id
 join post_contents pc on pc.post_id = p.post_id
@@ -184,7 +234,9 @@ group by
     p.published_at,
     pc.markdown,
     pc.sanitized_html,
-    p.status
+    p.status,
+    p.is_pinned,
+    p.is_locked
 limit 1
 "#
     }
@@ -193,6 +245,15 @@ limit 1
         pool: &sqlx::PgPool,
         limit: i64,
         offset: i64,
+    ) -> sqlx::Result<Vec<PostSummary>> {
+        Self::list_published_summaries_for_user(pool, limit, offset, None).await
+    }
+
+    pub async fn list_published_summaries_for_user(
+        pool: &sqlx::PgPool,
+        limit: i64,
+        offset: i64,
+        current_user_id: Option<Uuid>,
     ) -> sqlx::Result<Vec<PostSummary>> {
         let rows = sqlx::query_as!(
             PostSummaryRow,
@@ -210,12 +271,31 @@ select
     p.comment_count,
     p.like_count,
     p.favorite_count,
-    p.published_at
+    p.published_at,
+    lr.author_name as "last_reply_author_name?",
+    lr.author_avatar_url as "last_reply_author_avatar_url?",
+    lr.replied_at as "last_reply_at?",
+    p.is_pinned as "pinned!",
+    p.is_locked as "locked!",
+    pr.user_id is not null as "read_by_me!"
 from posts p
 join users u on u.user_id = p.author_id
 left join categories c on c.category_id = p.category_id
 left join post_tags pt on pt.post_id = p.post_id
 left join tags t on t.tag_id = pt.tag_id
+left join lateral (
+    select
+        cu.nickname as author_name,
+        cu.avatar_url as author_avatar_url,
+        lc.created_at as replied_at
+    from comments lc
+    join users cu on cu.user_id = lc.author_id
+    where lc.post_id = p.post_id
+      and lc.status = 'visible'
+    order by lc.created_at desc, lc.comment_id desc
+    limit 1
+) lr on true
+left join post_reads pr on pr.post_id = p.post_id and pr.user_id = $3
 where p.status = 'published'
 group by
     p.post_id,
@@ -230,18 +310,214 @@ group by
     p.like_count,
     p.favorite_count,
     p.published_at,
+    lr.author_name,
+    lr.author_avatar_url,
+    lr.replied_at,
     p.is_pinned,
+    p.is_locked,
+    pr.user_id,
     p.created_at
 order by p.is_pinned desc, p.published_at desc nulls last, p.created_at desc
 limit $1 offset $2
 "#,
             limit,
-            offset
+            offset,
+            current_user_id
         )
         .fetch_all(pool)
         .await?;
 
         Ok(rows.into_iter().map(PostSummary::from).collect())
+    }
+
+    pub async fn list_homepage_summaries(
+        pool: &sqlx::PgPool,
+        query: &HomeQuery,
+        current_user_id: Option<Uuid>,
+    ) -> sqlx::Result<Vec<PostSummary>> {
+        let query = query.clone().normalized();
+        let limit = query.page_size as i64;
+        let offset = ((query.page.saturating_sub(1)) * query.page_size) as i64;
+        let category = query.category.as_deref();
+        let tag = query.tag.as_deref();
+        let tab = match query.tab {
+            HomeTab::Hot => "hot",
+            HomeTab::Unanswered => "unanswered",
+            HomeTab::Following => "following",
+            HomeTab::Latest => "latest",
+        };
+        let sort = match (query.tab, query.sort) {
+            (HomeTab::Hot, _) | (_, HomeSort::Hot) => "hot",
+            (_, HomeSort::Created) => "created",
+            (_, HomeSort::Replies) => "replies",
+            (_, HomeSort::Views) => "views",
+            (_, HomeSort::LastReply) => "last_reply",
+        };
+        let since = match query.time {
+            HomeTimeRange::All => None,
+            HomeTimeRange::Today => Some(OffsetDateTime::now_utc() - time::Duration::days(1)),
+            HomeTimeRange::Week => Some(OffsetDateTime::now_utc() - time::Duration::weeks(1)),
+            HomeTimeRange::Month => Some(OffsetDateTime::now_utc() - time::Duration::days(30)),
+        };
+
+        let rows = sqlx::query_as!(
+            PostSummaryRow,
+            r#"
+select
+    p.post_id,
+    p.title,
+    p.summary,
+    p.author_id,
+    u.nickname as author_name,
+    u.avatar_url as author_avatar_url,
+    c.name as category_name,
+    coalesce(array_remove(array_agg(t.name order by t.name), null), array[]::text[]) as "tags!: Vec<String>",
+    p.view_count,
+    p.comment_count,
+    p.like_count,
+    p.favorite_count,
+    p.published_at,
+    lr.author_name as "last_reply_author_name?",
+    lr.author_avatar_url as "last_reply_author_avatar_url?",
+    lr.replied_at as "last_reply_at?",
+    p.is_pinned as "pinned!",
+    p.is_locked as "locked!",
+    pr.user_id is not null as "read_by_me!"
+from posts p
+join users u on u.user_id = p.author_id
+left join categories c on c.category_id = p.category_id
+left join post_tags pt on pt.post_id = p.post_id
+left join tags t on t.tag_id = pt.tag_id
+left join lateral (
+    select
+        cu.nickname as author_name,
+        cu.avatar_url as author_avatar_url,
+        lc.created_at as replied_at
+    from comments lc
+    join users cu on cu.user_id = lc.author_id
+    where lc.post_id = p.post_id
+      and lc.status = 'visible'
+    order by lc.created_at desc, lc.comment_id desc
+    limit 1
+) lr on true
+left join post_reads pr on pr.post_id = p.post_id and pr.user_id = $3
+where p.status = 'published'
+  and ($4::text is null or c.name = $4)
+  and ($5::text is null or exists (
+      select 1
+      from post_tags fpt
+      join tags ft on ft.tag_id = fpt.tag_id
+      where fpt.post_id = p.post_id
+        and lower(ft.name) = lower($5)
+  ))
+  and ($6::text <> 'unanswered' or p.comment_count = 0)
+  and ($6::text <> 'following' or exists (
+      select 1
+      from follows ff
+      where ff.follower_id = $3
+        and ff.followee_id = p.author_id
+  ))
+  and ($7::timestamptz is null or p.published_at >= $7)
+group by
+    p.post_id,
+    p.title,
+    p.summary,
+    p.author_id,
+    u.nickname,
+    u.avatar_url,
+    c.name,
+    p.view_count,
+    p.comment_count,
+    p.like_count,
+    p.favorite_count,
+    p.published_at,
+    lr.author_name,
+    lr.author_avatar_url,
+    lr.replied_at,
+    p.is_pinned,
+    p.is_locked,
+    pr.user_id,
+    p.created_at
+order by
+    p.is_pinned desc,
+    case when $8 = 'hot' then p.view_count + p.comment_count * 20 + p.like_count * 10 + p.favorite_count * 5 end desc nulls last,
+    case when $8 = 'replies' then p.comment_count end desc nulls last,
+    case when $8 = 'views' then p.view_count end desc nulls last,
+    case when $8 = 'created' then p.created_at end desc nulls last,
+    case when $8 = 'last_reply' then coalesce(lr.replied_at, p.published_at, p.created_at) end desc nulls last,
+    coalesce(p.published_at, p.created_at) desc,
+    p.created_at desc
+limit $1 offset $2
+"#,
+            limit,
+            offset,
+            current_user_id,
+            category,
+            tag,
+            tab,
+            since,
+            sort
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows.into_iter().map(PostSummary::from).collect())
+    }
+
+    pub async fn count_homepage_summaries(
+        pool: &sqlx::PgPool,
+        query: &HomeQuery,
+        current_user_id: Option<Uuid>,
+    ) -> sqlx::Result<i64> {
+        let query = query.clone().normalized();
+        let category = query.category.as_deref();
+        let tag = query.tag.as_deref();
+        let tab = match query.tab {
+            HomeTab::Hot => "hot",
+            HomeTab::Unanswered => "unanswered",
+            HomeTab::Following => "following",
+            HomeTab::Latest => "latest",
+        };
+        let since = match query.time {
+            HomeTimeRange::All => None,
+            HomeTimeRange::Today => Some(OffsetDateTime::now_utc() - time::Duration::days(1)),
+            HomeTimeRange::Week => Some(OffsetDateTime::now_utc() - time::Duration::weeks(1)),
+            HomeTimeRange::Month => Some(OffsetDateTime::now_utc() - time::Duration::days(30)),
+        };
+
+        let row = sqlx::query!(
+            r#"
+select count(distinct p.post_id) as "total!"
+from posts p
+left join categories c on c.category_id = p.category_id
+where p.status = 'published'
+  and ($2::text is null or c.name = $2)
+  and ($3::text is null or exists (
+      select 1
+      from post_tags fpt
+      join tags ft on ft.tag_id = fpt.tag_id
+      where fpt.post_id = p.post_id
+        and lower(ft.name) = lower($3)
+  ))
+  and ($4::text <> 'unanswered' or p.comment_count = 0)
+  and ($4::text <> 'following' or exists (
+      select 1
+      from follows ff
+      where ff.follower_id = $1
+        and ff.followee_id = p.author_id
+  ))
+  and ($5::timestamptz is null or p.published_at >= $5)
+"#,
+            current_user_id,
+            category,
+            tag,
+            tab,
+            since
+        )
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row.total)
     }
 
     pub async fn find_detail(
@@ -267,7 +543,9 @@ select
     p.published_at,
     pc.markdown,
     pc.sanitized_html,
-    p.status
+    p.status,
+    p.is_pinned as "pinned!",
+    p.is_locked as "locked!"
 from posts p
 join users u on u.user_id = p.author_id
 join post_contents pc on pc.post_id = p.post_id
@@ -291,15 +569,63 @@ group by
     p.published_at,
     pc.markdown,
     pc.sanitized_html,
-    p.status
+    p.status,
+    p.is_pinned,
+    p.is_locked
 limit 1
+"#,
+            post_id
+        )
+        .fetch_optional(pool)
+            .await?;
+
+        Ok(row.map(PostDetail::from))
+    }
+
+    pub async fn mark_post_read(
+        pool: &sqlx::PgPool,
+        user_id: Uuid,
+        post_id: Uuid,
+    ) -> sqlx::Result<()> {
+        sqlx::query!(
+            r#"
+insert into post_reads (
+    user_id,
+    post_id,
+    read_at
+)
+values ($1, $2, now())
+on conflict (user_id, post_id) do update
+set read_at = excluded.read_at
+"#,
+            user_id,
+            post_id
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn increment_view_count(
+        pool: &sqlx::PgPool,
+        post_id: Uuid,
+    ) -> sqlx::Result<Option<i64>> {
+        let row = sqlx::query!(
+            r#"
+update posts
+set view_count = view_count + 1,
+    updated_at = now()
+where post_id = $1
+  and status = 'published'
+returning view_count
 "#,
             post_id
         )
         .fetch_optional(pool)
         .await?;
 
-        Ok(row.map(PostDetail::from))
+        Ok(row.map(|row| row.view_count))
     }
 
     pub async fn insert_post(pool: &sqlx::PgPool, detail: &PostDetail) -> sqlx::Result<()> {
@@ -343,9 +669,11 @@ insert into posts (
     comment_count,
     like_count,
     favorite_count,
-    published_at
+    published_at,
+    is_pinned,
+    is_locked
 )
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 "#,
             detail.summary.post_id,
             detail.summary.author_id,
@@ -357,7 +685,9 @@ values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             detail.summary.comment_count,
             detail.summary.like_count,
             detail.summary.favorite_count,
-            detail.summary.published_at
+            detail.summary.published_at,
+            detail.summary.pinned,
+            detail.locked
         )
         .execute(&mut *tx)
         .await?;

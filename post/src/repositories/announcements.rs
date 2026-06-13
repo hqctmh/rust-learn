@@ -263,6 +263,85 @@ where announcement_id = $1
         Ok(result.rows_affected())
     }
 
+    pub async fn update_announcement(
+        pool: &sqlx::PgPool,
+        announcement: &AnnouncementItem,
+    ) -> sqlx::Result<u64> {
+        let status = announcement_status_as_str(&announcement.status);
+        let (audience_type, audience_user_ids) =
+            announcement_audience_parts(&announcement.audience);
+        let result = sqlx::query!(
+            r#"
+update announcements
+set
+    title = $2,
+    content = $3,
+    announcement_type = $4,
+    is_pinned = $5,
+    status = $6,
+    starts_at = $7,
+    ends_at = $8,
+    audience_type = $9,
+    audience_user_ids = $10,
+    published_at = $11,
+    withdrawn_at = $12,
+    updated_at = $13
+where announcement_id = $1
+"#,
+            announcement.announcement_id,
+            announcement.title,
+            announcement.content,
+            announcement.announcement_type,
+            announcement.pinned,
+            status,
+            announcement.effective_at,
+            announcement.expires_at,
+            audience_type,
+            &audience_user_ids,
+            announcement.published_at,
+            announcement.withdrawn_at,
+            announcement.updated_at
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    pub async fn announcement_recipient_ids(
+        pool: &sqlx::PgPool,
+        announcement: &AnnouncementItem,
+    ) -> sqlx::Result<Vec<Uuid>> {
+        match &announcement.audience {
+            AnnouncementAudience::AllUsers => {
+                let rows = sqlx::query!(
+                    r#"
+select user_id
+from users
+where status <> 'disabled'
+"#
+                )
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().map(|row| row.user_id).collect())
+            }
+            AnnouncementAudience::UserIds(user_ids) => {
+                let rows = sqlx::query!(
+                    r#"
+select user_id
+from users
+where user_id = any($1)
+  and status <> 'disabled'
+"#,
+                    user_ids
+                )
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().map(|row| row.user_id).collect())
+            }
+        }
+    }
+
     pub async fn mark_read(
         pool: &sqlx::PgPool,
         announcement_id: Uuid,

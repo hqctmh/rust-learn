@@ -2,7 +2,9 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    domain::announcements::{AnnouncementItem, AnnouncementStatus, CreateAnnouncementRequest},
+    domain::announcements::{
+        AnnouncementItem, AnnouncementStatus, CreateAnnouncementRequest, UpdateAnnouncementRequest,
+    },
     error::ForumError,
 };
 
@@ -44,6 +46,24 @@ impl AnnouncementService {
         announcement.status = AnnouncementStatus::Published;
         announcement.published_at = Some(now);
         announcement.withdrawn_at = None;
+        announcement.updated_at = now;
+        Ok(())
+    }
+
+    pub fn apply_update(
+        announcement: &mut AnnouncementItem,
+        request: UpdateAnnouncementRequest,
+        now: OffsetDateTime,
+    ) -> Result<(), ForumError> {
+        request.validate().map_err(ForumError::Validation)?;
+
+        announcement.title = request.title.trim().to_string();
+        announcement.content = request.content.trim().to_string();
+        announcement.announcement_type = request.announcement_type.trim().to_string();
+        announcement.pinned = request.pinned;
+        announcement.effective_at = request.effective_at;
+        announcement.expires_at = request.expires_at;
+        announcement.audience = request.audience;
         announcement.updated_at = now;
         Ok(())
     }

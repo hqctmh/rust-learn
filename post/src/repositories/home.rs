@@ -228,6 +228,8 @@ select
     end as reply_count_label
 from users u
 join comments c on c.author_id = u.user_id and c.status = 'visible'
+where u.status = 'active'
+  and c.created_at >= now() - interval '30 days'
 group by u.user_id, u.nickname
 order by count(c.comment_id) desc, u.nickname asc
 limit $1
@@ -329,6 +331,8 @@ select
     end as "reply_count_label!"
 from users u
 join comments c on c.author_id = u.user_id and c.status = 'visible'
+where u.status = 'active'
+  and c.created_at >= now() - interval '30 days'
 group by u.user_id, u.nickname
 order by count(c.comment_id) desc, u.nickname asc
 limit $1

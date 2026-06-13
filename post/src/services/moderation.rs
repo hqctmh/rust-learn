@@ -27,11 +27,15 @@ impl ModerationService {
     ) -> ModerationPostAction {
         post.status = status.clone();
         let pinned = was_pinned && status != PostStatus::Deleted;
+        if status == PostStatus::Deleted {
+            post.locked = false;
+        }
 
         ModerationPostAction {
             post_id: post.summary.post_id,
             status,
             pinned,
+            locked: post.locked,
         }
     }
 
@@ -47,6 +51,24 @@ impl ModerationService {
             post_id: post.summary.post_id,
             status: post.status.clone(),
             pinned,
+            locked: post.locked,
+        })
+    }
+
+    pub fn build_lock_action(
+        post: &mut PostDetail,
+        locked: bool,
+    ) -> Result<ModerationPostAction, ForumError> {
+        if post.status == PostStatus::Deleted {
+            return Err(ForumError::Conflict("已删除帖子不能锁定".to_string()));
+        }
+
+        post.locked = locked;
+        Ok(ModerationPostAction {
+            post_id: post.summary.post_id,
+            status: post.status.clone(),
+            pinned: false,
+            locked,
         })
     }
 
@@ -88,6 +110,7 @@ impl ModerationService {
             category_name: post.summary.category_name.clone(),
             status: post.status.clone(),
             pinned,
+            locked: post.locked,
             comment_count: post.summary.comment_count,
             view_count: post.summary.view_count,
             updated_at: post.summary.published_at,

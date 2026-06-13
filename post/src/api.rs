@@ -93,6 +93,8 @@ pub fn routes(state: AppState) -> Router<LeptosOptions> {
         .route("/api/admin/posts/{post_id}/delete", post(delete_admin_post))
         .route("/api/admin/posts/{post_id}/pin", post(pin_admin_post))
         .route("/api/admin/posts/{post_id}/unpin", post(unpin_admin_post))
+        .route("/api/admin/posts/{post_id}/lock", post(lock_admin_post))
+        .route("/api/admin/posts/{post_id}/unlock", post(unlock_admin_post))
         .route("/api/admin/comments", get(list_admin_comments))
         .route(
             "/api/admin/comments/{comment_id}/delete",
@@ -400,6 +402,24 @@ async fn unpin_admin_post(
 ) -> Result<Json<ModerationPostAction>, ApiError> {
     let user_id = require_actor_id(&state, params.actor()).await?;
     Ok(Json(state.unpin_post(user_id, post_id).await?))
+}
+
+async fn lock_admin_post(
+    Path(post_id): Path<Uuid>,
+    Extension(state): Extension<AppState>,
+    Query(params): Query<AdminDashboardQueryParams>,
+) -> Result<Json<ModerationPostAction>, ApiError> {
+    let user_id = require_actor_id(&state, params.actor()).await?;
+    Ok(Json(state.lock_post(user_id, post_id).await?))
+}
+
+async fn unlock_admin_post(
+    Path(post_id): Path<Uuid>,
+    Extension(state): Extension<AppState>,
+    Query(params): Query<AdminDashboardQueryParams>,
+) -> Result<Json<ModerationPostAction>, ApiError> {
+    let user_id = require_actor_id(&state, params.actor()).await?;
+    Ok(Json(state.unlock_post(user_id, post_id).await?))
 }
 
 async fn list_admin_comments(

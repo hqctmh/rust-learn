@@ -21,6 +21,21 @@ fn server_error(message: impl ToString) -> ServerFnError {
     ServerFnError::ServerError(message.to_string())
 }
 
+#[cfg(feature = "ssr")]
+fn parse_optional_announcement_time(
+    value: &str,
+) -> Result<Option<time::OffsetDateTime>, ServerFnError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let format = time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]");
+    time::PrimitiveDateTime::parse(value, format)
+        .map(|datetime| Some(datetime.assume_utc()))
+        .map_err(server_error)
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PostDetailPageData {
     pub post: PostDetail,
@@ -28,14 +43,27 @@ pub struct PostDetailPageData {
 }
 
 #[server]
-pub async fn load_home_page(query: HomeQuery) -> Result<HomePageData, ServerFnError> {
+pub async fn load_home_page(
+    query: HomeQuery,
+    session_id: String,
+) -> Result<HomePageData, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
         use crate::state::AppState;
 
         let state = expect_context::<AppState>();
+        let current_user_id = if session_id.trim().is_empty() {
+            None
+        } else {
+            let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+            let session = state
+                .current_session(session_id)
+                .await
+                .map_err(server_error)?;
+            Some(session.user.user_id)
+        };
         return state
-            .home_page(query, None)
+            .home_page(query, current_user_id)
             .await
             .map_err(|error| ServerFnError::ServerError(error.to_string()));
     }
@@ -43,6 +71,7 @@ pub async fn load_home_page(query: HomeQuery) -> Result<HomePageData, ServerFnEr
     #[cfg(not(feature = "ssr"))]
     {
         let _ = query;
+        let _ = session_id;
         Err(ServerFnError::ServerError(
             "server function called outside SSR".to_string(),
         ))
@@ -694,6 +723,694 @@ pub fn fallback_admin_dashboard() -> AdminDashboard {
     admin_dashboard_demo()
 }
 
+#[cfg(feature = "ssr")]
+fn role_permission_codes(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+#[cfg(feature = "ssr")]
+fn role_codes(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+#[server]
+pub async fn create_admin_role(
+    session_id: String,
+    code: String,
+    name: String,
+    permission_codes: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{
+            domain::{rbac::CreateRoleRequest, user_admin::AuditContext},
+            state::AppState,
+        };
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .create_role(
+                session.user.user_id,
+                CreateRoleRequest {
+                    code,
+                    name,
+                    permission_codes: role_permission_codes(&permission_codes),
+                    context: AuditContext::default(),
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, code, name, permission_codes);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn update_admin_role(
+    session_id: String,
+    role_code: String,
+    name: String,
+    permission_codes: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{
+            domain::{rbac::UpdateRoleRequest, user_admin::AuditContext},
+            state::AppState,
+        };
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .update_role(
+                session.user.user_id,
+                &role_code,
+                UpdateRoleRequest {
+                    name: Some(name),
+                    permission_codes: Some(role_permission_codes(&permission_codes)),
+                    context: AuditContext::default(),
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, role_code, name, permission_codes);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn delete_admin_role(
+    session_id: String,
+    role_code: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::user_admin::AuditContext, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .delete_role(session.user.user_id, &role_code, AuditContext::default())
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, role_code);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn create_admin_category(
+    session_id: String,
+    name: String,
+    color: String,
+    sort_order: i32,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::taxonomy::CreateCategoryRequest, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .create_category(
+                session.user.user_id,
+                CreateCategoryRequest {
+                    name,
+                    color,
+                    sort_order,
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, name, color, sort_order);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn enable_admin_category(
+    session_id: String,
+    category_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::taxonomy::UpdateCategoryRequest, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let category_id = Uuid::parse_str(&category_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .update_category(
+                session.user.user_id,
+                category_id,
+                UpdateCategoryRequest {
+                    name: None,
+                    color: None,
+                    sort_order: None,
+                    enabled: Some(true),
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, category_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn update_admin_category(
+    session_id: String,
+    category_id: String,
+    name: String,
+    color: String,
+    sort_order: i32,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::taxonomy::UpdateCategoryRequest, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let category_id = Uuid::parse_str(&category_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .update_category(
+                session.user.user_id,
+                category_id,
+                UpdateCategoryRequest {
+                    name: Some(name),
+                    color: Some(color),
+                    sort_order: Some(sort_order),
+                    enabled: None,
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, category_id, name, color, sort_order);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn disable_admin_category(
+    session_id: String,
+    category_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::state::AppState;
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let category_id = Uuid::parse_str(&category_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .disable_category(session.user.user_id, category_id)
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, category_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn create_admin_tag(
+    session_id: String,
+    name: String,
+    sort_order: i32,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::taxonomy::CreateTagRequest, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .create_tag(session.user.user_id, CreateTagRequest { name, sort_order })
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, name, sort_order);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn enable_admin_tag(
+    session_id: String,
+    tag_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::taxonomy::UpdateTagRequest, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let tag_id = Uuid::parse_str(&tag_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .update_tag(
+                session.user.user_id,
+                tag_id,
+                UpdateTagRequest {
+                    name: None,
+                    sort_order: None,
+                    enabled: Some(true),
+                    use_count: None,
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, tag_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn update_admin_tag(
+    session_id: String,
+    tag_id: String,
+    name: String,
+    sort_order: i32,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::taxonomy::UpdateTagRequest, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let tag_id = Uuid::parse_str(&tag_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .update_tag(
+                session.user.user_id,
+                tag_id,
+                UpdateTagRequest {
+                    name: Some(name),
+                    sort_order: Some(sort_order),
+                    enabled: None,
+                    use_count: None,
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, tag_id, name, sort_order);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn disable_admin_tag(
+    session_id: String,
+    tag_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::taxonomy::UpdateTagRequest, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let tag_id = Uuid::parse_str(&tag_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .update_tag(
+                session.user.user_id,
+                tag_id,
+                UpdateTagRequest {
+                    name: None,
+                    sort_order: None,
+                    enabled: Some(false),
+                    use_count: None,
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, tag_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn merge_admin_tag(
+    session_id: String,
+    source_tag_id: String,
+    target_tag_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{domain::taxonomy::MergeTagRequest, state::AppState};
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let source_tag_id = Uuid::parse_str(&source_tag_id).map_err(server_error)?;
+        let target_tag_id = Uuid::parse_str(&target_tag_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .merge_tag(
+                session.user.user_id,
+                source_tag_id,
+                MergeTagRequest { target_tag_id },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, source_tag_id, target_tag_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn create_admin_announcement(
+    session_id: String,
+    title: String,
+    content: String,
+    announcement_type: String,
+    pinned: bool,
+    effective_at: String,
+    expires_at: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{
+            domain::announcements::{AnnouncementAudience, CreateAnnouncementRequest},
+            state::AppState,
+        };
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .create_announcement(
+                session.user.user_id,
+                CreateAnnouncementRequest {
+                    title,
+                    content,
+                    announcement_type,
+                    pinned,
+                    effective_at: parse_optional_announcement_time(&effective_at)?,
+                    expires_at: parse_optional_announcement_time(&expires_at)?,
+                    audience: AnnouncementAudience::AllUsers,
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (
+            session_id,
+            title,
+            content,
+            announcement_type,
+            pinned,
+            effective_at,
+            expires_at,
+        );
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn update_admin_announcement(
+    session_id: String,
+    announcement_id: String,
+    title: String,
+    content: String,
+    announcement_type: String,
+    pinned: bool,
+    effective_at: String,
+    expires_at: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{
+            domain::announcements::{AnnouncementAudience, UpdateAnnouncementRequest},
+            state::AppState,
+        };
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let announcement_id = Uuid::parse_str(&announcement_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .update_announcement(
+                session.user.user_id,
+                announcement_id,
+                UpdateAnnouncementRequest {
+                    title,
+                    content,
+                    announcement_type,
+                    pinned,
+                    effective_at: parse_optional_announcement_time(&effective_at)?,
+                    expires_at: parse_optional_announcement_time(&expires_at)?,
+                    audience: AnnouncementAudience::AllUsers,
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (
+            session_id,
+            announcement_id,
+            title,
+            content,
+            announcement_type,
+            pinned,
+            effective_at,
+            expires_at,
+        );
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn push_admin_announcement(
+    session_id: String,
+    announcement_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::state::AppState;
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let announcement_id = Uuid::parse_str(&announcement_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .push_announcement(session.user.user_id, announcement_id)
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, announcement_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
 #[server]
 pub async fn publish_admin_announcement(
     session_id: String,
@@ -836,6 +1553,52 @@ pub async fn enable_admin_user(
     #[cfg(not(feature = "ssr"))]
     {
         let _ = (session_id, target_user_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn update_admin_user_roles(
+    session_id: String,
+    target_user_id: String,
+    roles: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::{
+            domain::user_admin::{AuditContext, UpdateUserRolesRequest},
+            state::AppState,
+        };
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let target_user_id = Uuid::parse_str(&target_user_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .update_user_roles(
+                session.user.user_id,
+                target_user_id,
+                UpdateUserRolesRequest {
+                    roles: role_codes(&roles),
+                    context: AuditContext::default(),
+                },
+            )
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, target_user_id, roles);
         Err(ServerFnError::ServerError(
             "server function called outside SSR".to_string(),
         ))
@@ -1000,6 +1763,76 @@ pub async fn unpin_admin_post(
             .map_err(server_error)?;
         state
             .unpin_post(session.user.user_id, post_id)
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, post_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn lock_admin_post(
+    session_id: String,
+    post_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::state::AppState;
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let post_id = Uuid::parse_str(&post_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .lock_post(session.user.user_id, post_id)
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, post_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn unlock_admin_post(
+    session_id: String,
+    post_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::state::AppState;
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let post_id = Uuid::parse_str(&post_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .unlock_post(session.user.user_id, post_id)
             .await
             .map_err(server_error)?;
         return state
@@ -1279,14 +2112,30 @@ pub async fn mark_all_page_notifications_read(
 }
 
 #[server]
-pub async fn load_post_detail_page(post_id: String) -> Result<PostDetailPageData, ServerFnError> {
+pub async fn load_post_detail_page(
+    post_id: String,
+    session_id: String,
+) -> Result<PostDetailPageData, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
         use crate::state::AppState;
 
         let post_id = Uuid::parse_str(&post_id).map_err(server_error)?;
         let state = expect_context::<AppState>();
-        let post = state.post_detail(post_id).await.map_err(server_error)?;
+        let current_user_id = if session_id.trim().is_empty() {
+            None
+        } else {
+            let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+            let session = state
+                .current_session(session_id)
+                .await
+                .map_err(server_error)?;
+            Some(session.user.user_id)
+        };
+        let post = state
+            .post_detail_for_user(post_id, current_user_id)
+            .await
+            .map_err(server_error)?;
         let comments = state
             .comments_for_post(post_id)
             .await
@@ -1297,6 +2146,7 @@ pub async fn load_post_detail_page(post_id: String) -> Result<PostDetailPageData
     #[cfg(not(feature = "ssr"))]
     {
         let _ = post_id;
+        let _ = session_id;
         Err(ServerFnError::ServerError(
             "server function called outside SSR".to_string(),
         ))
@@ -1314,6 +2164,7 @@ pub fn fallback_post_detail_page(post_id: String) -> PostDetailPageData {
             markdown: "内容加载中。".to_string(),
             sanitized_html: "<p>内容加载中。</p>".to_string(),
             status: crate::domain::posts::PostStatus::Published,
+            locked: false,
             liked_by_me: false,
             favorited_by_me: false,
             following_author: false,

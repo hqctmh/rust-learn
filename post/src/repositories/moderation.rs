@@ -16,6 +16,7 @@ pub struct ModerationPostDbRow {
     pub category_name: Option<String>,
     pub status: String,
     pub pinned: bool,
+    pub locked: bool,
     pub comment_count: i64,
     pub view_count: i64,
     pub updated_at: Option<OffsetDateTime>,
@@ -30,6 +31,7 @@ impl From<ModerationPostDbRow> for ModerationPostRow {
             category_name: row.category_name,
             status: post_status_from_str(&row.status),
             pinned: row.pinned,
+            locked: row.locked,
             comment_count: row.comment_count,
             view_count: row.view_count,
             updated_at: row.updated_at,
@@ -42,6 +44,7 @@ pub struct ModerationPostActionRow {
     pub post_id: Uuid,
     pub status: String,
     pub pinned: bool,
+    pub locked: bool,
 }
 
 impl From<ModerationPostActionRow> for ModerationPostAction {
@@ -50,6 +53,7 @@ impl From<ModerationPostActionRow> for ModerationPostAction {
             post_id: row.post_id,
             status: post_status_from_str(&row.status),
             pinned: row.pinned,
+            locked: row.locked,
         }
     }
 }
@@ -93,6 +97,7 @@ select
     c.name as "category_name?",
     p.status,
     p.is_pinned as "pinned!",
+    p.is_locked as "locked!",
     p.comment_count,
     p.view_count,
     p.updated_at as "updated_at?"
@@ -118,7 +123,8 @@ order by p.updated_at desc, p.created_at desc
 select
     post_id,
     status,
-    is_pinned as "pinned!"
+    is_pinned as "pinned!",
+    is_locked as "locked!"
 from posts
 where post_id = $1
 limit 1
@@ -144,12 +150,14 @@ update posts
 set
     status = $2,
     is_pinned = case when $2 = 'deleted' then false else is_pinned end,
+    is_locked = case when $2 = 'deleted' then false else is_locked end,
     updated_at = now()
 where post_id = $1
 returning
     post_id,
     status,
-    is_pinned as "pinned!"
+    is_pinned as "pinned!",
+    is_locked as "locked!"
 "#,
             post_id,
             status
@@ -177,10 +185,40 @@ where post_id = $1
 returning
     post_id,
     status,
-    is_pinned as "pinned!"
+    is_pinned as "pinned!",
+    is_locked as "locked!"
 "#,
             post_id,
             pinned
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row.map(ModerationPostAction::from))
+    }
+
+    pub async fn set_post_lock(
+        pool: &sqlx::PgPool,
+        post_id: Uuid,
+        locked: bool,
+    ) -> sqlx::Result<Option<ModerationPostAction>> {
+        let row = sqlx::query_as!(
+            ModerationPostActionRow,
+            r#"
+update posts
+set
+    is_locked = $2,
+    updated_at = now()
+where post_id = $1
+  and status <> 'deleted'
+returning
+    post_id,
+    status,
+    is_pinned as "pinned!",
+    is_locked as "locked!"
+"#,
+            post_id,
+            locked
         )
         .fetch_optional(pool)
         .await?;

@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::domain::rbac::{Permission, admin_permissions};
+use crate::domain::rbac::{Permission, Role, admin_permissions};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminDashboard {
     pub stats: Vec<AdminStat>,
     pub menu: Vec<AdminMenuItem>,
     pub permissions: Vec<Permission>,
+    pub roles: Vec<Role>,
     pub users: Vec<AdminUserRow>,
     pub moderation_posts: Vec<AdminPostRow>,
     pub moderation_comments: Vec<AdminCommentRow>,
@@ -49,12 +51,14 @@ pub struct AdminPostRow {
     pub author: String,
     pub category: String,
     pub status: String,
+    pub locked: bool,
     pub actions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminCommentRow {
     pub comment_id: Uuid,
+    pub post_id: Uuid,
     pub post_title: String,
     pub author: String,
     pub content: String,
@@ -75,6 +79,7 @@ pub struct AdminReportRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminCategoryRow {
+    pub category_id: Uuid,
     pub name: String,
     pub color: String,
     pub sort_order: i32,
@@ -85,6 +90,7 @@ pub struct AdminCategoryRow {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdminTagRow {
+    pub tag_id: Uuid,
     pub name: String,
     pub sort_order: i32,
     pub use_count: u32,
@@ -96,7 +102,11 @@ pub struct AdminTagRow {
 pub struct AdminAnnouncementRow {
     pub announcement_id: Uuid,
     pub title: String,
+    pub content: String,
     pub announcement_type: String,
+    pub pinned: bool,
+    pub effective_at: Option<OffsetDateTime>,
+    pub expires_at: Option<OffsetDateTime>,
     pub audience: String,
     pub status: String,
     pub actions: Vec<String>,
@@ -116,6 +126,38 @@ pub struct AuditEntry {
     pub ip: String,
     pub user_agent: String,
     pub time_label: String,
+}
+
+pub fn audit_entries_csv(entries: &[AuditEntry]) -> String {
+    let mut csv = String::from("actor,action,target,ip,user_agent,time_label\n");
+    for entry in entries {
+        csv.push_str(&csv_row([
+            entry.actor.as_str(),
+            entry.action.as_str(),
+            entry.target.as_str(),
+            entry.ip.as_str(),
+            entry.user_agent.as_str(),
+            entry.time_label.as_str(),
+        ]));
+        csv.push('\n');
+    }
+    csv
+}
+
+fn csv_row<'a>(values: impl IntoIterator<Item = &'a str>) -> String {
+    values
+        .into_iter()
+        .map(csv_value)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn csv_value(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
 }
 
 pub fn admin_dashboard_demo() -> AdminDashboard {
@@ -140,6 +182,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
             menu("审计日志", "audit:view"),
         ],
         permissions: admin_permissions(),
+        roles: demo_roles(),
         users: vec![
             AdminUserRow {
                 user_id: Uuid::from_u128(1),
@@ -165,10 +208,12 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 author: "Skyline".to_string(),
                 category: "经验分享".to_string(),
                 status: "已发布".to_string(),
+                locked: false,
                 actions: vec![
                     "下架".to_string(),
                     "置顶".to_string(),
                     "取消置顶".to_string(),
+                    "锁定".to_string(),
                     "删除".to_string(),
                 ],
             },
@@ -178,12 +223,14 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 author: "hello-rust".to_string(),
                 category: "教程".to_string(),
                 status: "已下架".to_string(),
+                locked: false,
                 actions: vec!["恢复".to_string(), "查看".to_string(), "删除".to_string()],
             },
         ],
         moderation_comments: vec![
             AdminCommentRow {
                 comment_id: Uuid::from_u128(201),
+                post_id: Uuid::from_u128(101),
                 post_title: "在 server function 中使用 SQLx 事务的最佳实践".to_string(),
                 author: "wangxy".to_string(),
                 content: "这个事务边界解释得很清楚".to_string(),
@@ -192,6 +239,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
             },
             AdminCommentRow {
                 comment_id: Uuid::from_u128(202),
+                post_id: Uuid::from_u128(102),
                 post_title: "Markdown 渲染时如何高亮显示 Rust 代码？".to_string(),
                 author: "visitor".to_string(),
                 content: "该评论已被删除".to_string(),
@@ -201,6 +249,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
         ],
         categories: vec![
             AdminCategoryRow {
+                category_id: Uuid::from_u128(401),
                 name: "公告".to_string(),
                 color: "#0064E0".to_string(),
                 sort_order: 1,
@@ -213,6 +262,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 ],
             },
             AdminCategoryRow {
+                category_id: Uuid::from_u128(402),
                 name: "教程".to_string(),
                 color: "#35A853".to_string(),
                 sort_order: 2,
@@ -227,6 +277,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
         ],
         tags: vec![
             AdminTagRow {
+                tag_id: Uuid::from_u128(501),
                 name: "leptos".to_string(),
                 sort_order: 1,
                 use_count: 132,
@@ -238,6 +289,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 ],
             },
             AdminTagRow {
+                tag_id: Uuid::from_u128(502),
                 name: "axum".to_string(),
                 sort_order: 2,
                 use_count: 98,
@@ -253,7 +305,11 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
             AdminAnnouncementRow {
                 announcement_id: Uuid::from_u128(201),
                 title: "论坛升级与搜索增强说明".to_string(),
+                content: "搜索索引和标签筛选能力将在本周完成升级。".to_string(),
                 announcement_type: "系统公告".to_string(),
+                pinned: true,
+                effective_at: None,
+                expires_at: None,
                 audience: "全体用户".to_string(),
                 status: "已发布".to_string(),
                 actions: vec!["下线公告".to_string(), "推送公告".to_string()],
@@ -261,7 +317,11 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
             AdminAnnouncementRow {
                 announcement_id: Uuid::from_u128(202),
                 title: "标签体系调整公告".to_string(),
+                content: "标签命名和合并规则将按新版后台配置执行。".to_string(),
                 announcement_type: "运营公告".to_string(),
+                pinned: false,
+                effective_at: None,
+                expires_at: None,
                 audience: "指定角色".to_string(),
                 status: "草稿".to_string(),
                 actions: vec!["发布公告".to_string(), "编辑".to_string()],
@@ -318,6 +378,49 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
             },
         ],
     }
+}
+
+fn demo_roles() -> Vec<Role> {
+    vec![
+        Role {
+            code: "admin".to_string(),
+            name: "管理员".to_string(),
+            permissions: admin_permissions(),
+        },
+        Role {
+            code: "moderator".to_string(),
+            name: "内容审核员".to_string(),
+            permissions: admin_permissions()
+                .into_iter()
+                .filter(|permission| {
+                    matches!(
+                        permission.code.as_str(),
+                        "post:view"
+                            | "post:update"
+                            | "comment:view"
+                            | "comment:delete"
+                            | "report:view"
+                    )
+                })
+                .collect(),
+        },
+        Role {
+            code: "operator".to_string(),
+            name: "运营人员".to_string(),
+            permissions: admin_permissions()
+                .into_iter()
+                .filter(|permission| {
+                    matches!(
+                        permission.code.as_str(),
+                        "announcement:create"
+                            | "announcement:publish"
+                            | "category:view"
+                            | "tag:view"
+                    )
+                })
+                .collect(),
+        },
+    ]
 }
 
 fn stat(label: &str, value: &str, delta: &str) -> AdminStat {

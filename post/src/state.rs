@@ -10,8 +10,8 @@ use crate::{
     domain::{
         admin::{AdminDashboard, admin_dashboard_demo},
         announcements::{
-            AnnouncementAudience, AnnouncementItem, AnnouncementReadState,
-            CreateAnnouncementRequest,
+            AnnouncementAudience, AnnouncementItem, AnnouncementReadState, AnnouncementStatus,
+            CreateAnnouncementRequest, UpdateAnnouncementRequest,
         },
         auth::{RegisterRequest, Session, SessionUser},
         comments::{CommentNode, CreateCommentRequest},
@@ -67,7 +67,6 @@ use crate::domain::{
         AdminAnnouncementRow, AdminCategoryRow, AdminCommentRow, AdminPostRow, AdminReportRow,
         AdminStat, AdminTagRow, AdminUserRow as DashboardUserRow, AuditEntry,
     },
-    announcements::AnnouncementStatus,
     reports::ReportStatus,
 };
 
@@ -222,10 +221,47 @@ impl AppState {
             return self.forum.post_detail(post_id);
         };
 
-        PostgresPostRepository::find_detail(pool, post_id)
+        let mut detail = PostgresPostRepository::find_detail(pool, post_id)
             .await
             .map_err(|_| ForumError::Internal)?
-            .ok_or(ForumError::NotFound)
+            .ok_or(ForumError::NotFound)?;
+        if detail.status == PostStatus::Published {
+            if let Some(view_count) = PostgresPostRepository::increment_view_count(pool, post_id)
+                .await
+                .map_err(|_| ForumError::Internal)?
+            {
+                detail.summary.view_count = view_count;
+            }
+        }
+        Ok(detail)
+    }
+
+    pub async fn post_detail_for_user(
+        &self,
+        post_id: Uuid,
+        current_user_id: Option<Uuid>,
+    ) -> Result<PostDetail, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.post_detail_for_user(post_id, current_user_id);
+        };
+
+        let mut detail = self.post_detail(post_id).await?;
+        if let Some(user_id) = current_user_id {
+            let user = PostgresAuthRepository::find_user_by_id(pool, user_id)
+                .await
+                .map_err(|_| ForumError::Internal)?
+                .ok_or(ForumError::Unauthorized)?;
+            if user.is_disabled() {
+                return Err(ForumError::Forbidden);
+            }
+            if detail.status == PostStatus::Published {
+                PostgresPostRepository::mark_post_read(pool, user_id, post_id)
+                    .await
+                    .map_err(|_| ForumError::Internal)?;
+                detail.summary.read_by_me = true;
+            }
+        }
+        Ok(detail)
     }
 
     pub async fn comments_for_post(&self, post_id: Uuid) -> Result<Vec<CommentNode>, ForumError> {
@@ -723,6 +759,36 @@ impl AppState {
         Ok(announcement)
     }
 
+    pub async fn update_announcement(
+        &self,
+        admin_id: Uuid,
+        announcement_id: Uuid,
+        request: UpdateAnnouncementRequest,
+    ) -> Result<AnnouncementItem, ForumError> {
+        let Some(pool) = &self.db else {
+            return self
+                .forum
+                .update_announcement(admin_id, announcement_id, request);
+        };
+
+        postgres_admin_user(pool, admin_id).await?;
+        let mut announcement =
+            PostgresAnnouncementRepository::find_announcement(pool, announcement_id)
+                .await
+                .map_err(|_| ForumError::Internal)?
+                .ok_or(ForumError::NotFound)?;
+        AnnouncementService::apply_update(&mut announcement, request, OffsetDateTime::now_utc())?;
+        let rows_affected =
+            PostgresAnnouncementRepository::update_announcement(pool, &announcement)
+                .await
+                .map_err(|_| ForumError::Internal)?;
+        if rows_affected == 0 {
+            return Err(ForumError::NotFound);
+        }
+
+        Ok(announcement)
+    }
+
     pub async fn list_admin_announcements(
         &self,
         admin_id: Uuid,
@@ -759,6 +825,47 @@ impl AppState {
                 .map_err(|_| ForumError::Internal)?;
         if rows_affected == 0 {
             return Err(ForumError::NotFound);
+        }
+        let actions = announcement_published_actions(&announcement);
+        PostgresIntegrationRepository::insert_actions(pool, &actions)
+            .await
+            .map_err(|_| ForumError::Internal)?;
+
+        Ok(announcement)
+    }
+
+    pub async fn push_announcement(
+        &self,
+        admin_id: Uuid,
+        announcement_id: Uuid,
+    ) -> Result<AnnouncementItem, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.push_announcement(admin_id, announcement_id);
+        };
+
+        postgres_admin_user(pool, admin_id).await?;
+        let announcement = PostgresAnnouncementRepository::find_announcement(pool, announcement_id)
+            .await
+            .map_err(|_| ForumError::Internal)?
+            .ok_or(ForumError::NotFound)?;
+        if announcement.status != AnnouncementStatus::Published {
+            return Err(ForumError::Validation("只有已发布公告可以推送".to_string()));
+        }
+
+        let recipient_ids =
+            PostgresAnnouncementRepository::announcement_recipient_ids(pool, &announcement)
+                .await
+                .map_err(|_| ForumError::Internal)?;
+        for recipient_id in recipient_ids {
+            postgres_insert_notification(
+                pool,
+                recipient_id,
+                Some(admin_id),
+                NotificationType::Announcement,
+                announcement.title.clone(),
+                AnnouncementService::notification_body(&announcement.content),
+            )
+            .await?;
         }
         let actions = announcement_published_actions(&announcement);
         PostgresIntegrationRepository::insert_actions(pool, &actions)
@@ -1304,6 +1411,22 @@ impl AppState {
         self.set_post_pin(admin_id, post_id, false).await
     }
 
+    pub async fn lock_post(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<ModerationPostAction, ForumError> {
+        self.set_post_lock(admin_id, post_id, true).await
+    }
+
+    pub async fn unlock_post(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<ModerationPostAction, ForumError> {
+        self.set_post_lock(admin_id, post_id, false).await
+    }
+
     pub async fn admin_comments(
         &self,
         admin_id: Uuid,
@@ -1379,6 +1502,34 @@ impl AppState {
             return Err(ForumError::Conflict("已删除帖子不能置顶".to_string()));
         }
         PostgresModerationRepository::set_post_pin(pool, post_id, pinned)
+            .await
+            .map_err(|_| ForumError::Internal)?
+            .ok_or(ForumError::NotFound)
+    }
+
+    async fn set_post_lock(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+        locked: bool,
+    ) -> Result<ModerationPostAction, ForumError> {
+        let Some(pool) = &self.db else {
+            return if locked {
+                self.forum.lock_post(admin_id, post_id)
+            } else {
+                self.forum.unlock_post(admin_id, post_id)
+            };
+        };
+
+        postgres_admin_user(pool, admin_id).await?;
+        let current = PostgresModerationRepository::find_post_action(pool, post_id)
+            .await
+            .map_err(|_| ForumError::Internal)?
+            .ok_or(ForumError::NotFound)?;
+        if current.status == PostStatus::Deleted {
+            return Err(ForumError::Conflict("已删除帖子不能锁定".to_string()));
+        }
+        PostgresModerationRepository::set_post_lock(pool, post_id, locked)
             .await
             .map_err(|_| ForumError::Internal)?
             .ok_or(ForumError::NotFound)
@@ -1546,12 +1697,31 @@ impl AppState {
             return Ok(home);
         }
 
-        home.topics = self
-            .list_posts()
-            .await?
-            .into_iter()
-            .map(crate::domain::home::home_topic_from_post_summary)
-            .collect();
+        home.topics =
+            PostgresPostRepository::list_homepage_summaries(pool, &home.query, current_user_id)
+                .await
+                .map_err(|_| ForumError::Internal)?
+                .into_iter()
+                .map(crate::domain::home::home_topic_from_post_summary)
+                .collect();
+        let total =
+            PostgresPostRepository::count_homepage_summaries(pool, &home.query, current_user_id)
+                .await
+                .map_err(|_| ForumError::Internal)? as usize;
+        let total_pages = total.div_ceil(home.query.page_size).max(1);
+        let shown_start = if total == 0 {
+            0
+        } else {
+            (home.query.page.saturating_sub(1)) * home.query.page_size + 1
+        };
+        let shown_end = (shown_start.saturating_sub(1) + home.topics.len()).min(total);
+        home.pagination = crate::domain::home::HomePagination {
+            page: home.query.page,
+            page_size: home.query.page_size,
+            total,
+            total_pages,
+            label: format!("显示 {shown_start}-{shown_end} / {total} 个主题"),
+        };
 
         let runtime_config = RuntimeConfig::from_env();
         if runtime_config.home_sidebar_cache_enabled {
@@ -1702,6 +1872,7 @@ impl AppState {
         let announcements = self.list_admin_announcements(user_id).await?;
         let reports = self.list_reports(user_id).await?;
         let audit_logs = self.audit_logs(user_id).await?;
+        let roles = self.list_roles(user_id).await?;
 
         let mut dashboard = admin_dashboard_demo();
         dashboard.stats = vec![
@@ -1711,6 +1882,7 @@ impl AppState {
             admin_stat("在线用户", 0, "WebSocket"),
         ];
         dashboard.permissions = admin_permissions();
+        dashboard.roles = roles;
         dashboard.users = users.into_iter().map(dashboard_user_row).collect();
         dashboard.moderation_posts = posts.into_iter().map(dashboard_post_row).collect();
         dashboard.moderation_comments = comments.into_iter().map(dashboard_comment_row).collect();
@@ -1919,10 +2091,12 @@ fn dashboard_post_row(row: ModerationPostRow) -> AdminPostRow {
         author: row.author_name,
         category: row.category_name.unwrap_or_else(|| "未分类".to_string()),
         status: post_status_label(&row.status).to_string(),
+        locked: row.locked,
         actions: match row.status {
             PostStatus::Published => vec![
                 "下架".to_string(),
                 if row.pinned { "取消置顶" } else { "置顶" }.to_string(),
+                if row.locked { "解锁" } else { "锁定" }.to_string(),
                 "删除".to_string(),
             ],
             PostStatus::Offline => vec!["恢复".to_string(), "查看".to_string(), "删除".to_string()],
@@ -1936,6 +2110,7 @@ fn dashboard_post_row(row: ModerationPostRow) -> AdminPostRow {
 fn dashboard_comment_row(row: ModerationCommentRow) -> AdminCommentRow {
     AdminCommentRow {
         comment_id: row.comment_id,
+        post_id: row.post_id,
         post_title: row.post_title,
         author: row.author_name,
         content: row.content,
@@ -1951,6 +2126,7 @@ fn dashboard_comment_row(row: ModerationCommentRow) -> AdminCommentRow {
 #[cfg(feature = "ssr")]
 fn dashboard_category_row(row: CategoryItem) -> AdminCategoryRow {
     AdminCategoryRow {
+        category_id: row.category_id,
         name: row.name,
         color: row.color,
         sort_order: row.sort_order,
@@ -1967,6 +2143,7 @@ fn dashboard_category_row(row: CategoryItem) -> AdminCategoryRow {
 #[cfg(feature = "ssr")]
 fn dashboard_tag_row(row: TagItem) -> AdminTagRow {
     AdminTagRow {
+        tag_id: row.tag_id,
         name: row.name,
         sort_order: row.sort_order,
         use_count: row.use_count,
@@ -1984,7 +2161,11 @@ fn dashboard_announcement_row(row: AnnouncementItem) -> AdminAnnouncementRow {
     AdminAnnouncementRow {
         announcement_id: row.announcement_id,
         title: row.title,
+        content: row.content,
         announcement_type: row.announcement_type,
+        pinned: row.pinned,
+        effective_at: row.effective_at,
+        expires_at: row.expires_at,
         audience: announcement_audience_label(&row.audience),
         status: announcement_status_label(&row.status).to_string(),
         actions: match row.status {
@@ -2164,6 +2345,7 @@ struct ForumData {
     integration_actions: Vec<IntegrationAction>,
     announcements: HashMap<Uuid, AnnouncementItem>,
     announcement_reads: HashSet<(Uuid, Uuid)>,
+    post_reads: HashSet<(Uuid, Uuid)>,
     reports: HashMap<Uuid, ReportItem>,
     categories: HashMap<Uuid, CategoryItem>,
     tags: HashMap<Uuid, TagItem>,
@@ -2207,6 +2389,12 @@ impl ForumStore {
             like_count: 19,
             favorite_count: 8,
             published_at: Some(now),
+            last_reply_author_name: None,
+            last_reply_author_avatar_url: None,
+            last_reply_at: None,
+            pinned: false,
+            locked: false,
+            read_by_me: false,
         };
 
         let detail = PostDetail {
@@ -2217,6 +2405,7 @@ impl ForumStore {
                 "## Rust 异步任务的边界\n\n把通知、搜索索引和计数更新从请求链路中拆出去。",
             ),
             status: PostStatus::Published,
+            locked: false,
             liked_by_me: false,
             favorited_by_me: false,
             following_author: false,
@@ -2259,6 +2448,7 @@ impl ForumStore {
                 integration_actions: Vec::new(),
                 announcements: HashMap::new(),
                 announcement_reads: HashSet::new(),
+                post_reads: HashSet::new(),
                 reports: HashMap::new(),
                 categories,
                 tags,
@@ -2441,7 +2631,9 @@ impl ForumStore {
             return Err(ForumError::Forbidden);
         }
 
-        Ok(admin_dashboard_demo())
+        let mut dashboard = admin_dashboard_demo();
+        dashboard.roles = sorted_roles(data.roles.values().cloned());
+        Ok(dashboard)
     }
 
     pub fn create_announcement(
@@ -2463,6 +2655,22 @@ impl ForumStore {
         data.announcements
             .insert(announcement_id, announcement.clone());
         Ok(announcement)
+    }
+
+    pub fn update_announcement(
+        &self,
+        admin_id: Uuid,
+        announcement_id: Uuid,
+        request: UpdateAnnouncementRequest,
+    ) -> Result<AnnouncementItem, ForumError> {
+        let mut data = self.write_data()?;
+        ensure_admin(&data, admin_id)?;
+        let announcement = data
+            .announcements
+            .get_mut(&announcement_id)
+            .ok_or(ForumError::NotFound)?;
+        AnnouncementService::apply_update(announcement, request, OffsetDateTime::now_utc())?;
+        Ok(announcement.clone())
     }
 
     pub fn list_admin_announcements(
@@ -2510,6 +2718,37 @@ impl ForumStore {
         data.integration_actions
             .extend(announcement_published_actions(&published));
         Ok(published)
+    }
+
+    pub fn push_announcement(
+        &self,
+        admin_id: Uuid,
+        announcement_id: Uuid,
+    ) -> Result<AnnouncementItem, ForumError> {
+        let mut data = self.write_data()?;
+        ensure_admin(&data, admin_id)?;
+        let announcement = data
+            .announcements
+            .get(&announcement_id)
+            .ok_or(ForumError::NotFound)?
+            .clone();
+        if announcement.status != AnnouncementStatus::Published {
+            return Err(ForumError::Validation("只有已发布公告可以推送".to_string()));
+        }
+
+        for recipient_id in announcement_recipients(&data, &announcement) {
+            push_notification(
+                &mut data,
+                recipient_id,
+                Some(admin_id),
+                NotificationType::Announcement,
+                announcement.title.clone(),
+                AnnouncementService::notification_body(&announcement.content),
+            );
+        }
+        data.integration_actions
+            .extend(announcement_published_actions(&announcement));
+        Ok(announcement)
     }
 
     pub fn withdraw_announcement(
@@ -2856,6 +3095,22 @@ impl ForumStore {
         post_id: Uuid,
     ) -> Result<ModerationPostAction, ForumError> {
         self.set_post_pin(admin_id, post_id, false)
+    }
+
+    pub fn lock_post(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<ModerationPostAction, ForumError> {
+        self.set_post_lock(admin_id, post_id, true)
+    }
+
+    pub fn unlock_post(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<ModerationPostAction, ForumError> {
+        self.set_post_lock(admin_id, post_id, false)
     }
 
     pub fn admin_comments(&self, admin_id: Uuid) -> Result<Vec<ModerationCommentRow>, ForumError> {
@@ -3285,6 +3540,41 @@ impl ForumStore {
         let detail = data.posts.get_mut(&post_id).ok_or(ForumError::NotFound)?;
         detail.summary.view_count += 1;
         Ok(detail.clone())
+    }
+
+    pub fn post_detail_for_user(
+        &self,
+        post_id: Uuid,
+        current_user_id: Option<Uuid>,
+    ) -> Result<PostDetail, ForumError> {
+        let mut data = self.write_data()?;
+        if let Some(user_id) = current_user_id {
+            if !data.users.contains_key(&user_id) {
+                return Err(ForumError::Unauthorized);
+            }
+            if data.disabled_users.contains(&user_id) {
+                return Err(ForumError::Forbidden);
+            }
+        }
+        let mut should_mark_read = false;
+        let mut detail = {
+            let detail = data.posts.get_mut(&post_id).ok_or(ForumError::NotFound)?;
+            detail.summary.view_count += 1;
+            if current_user_id.is_some() && detail.status == PostStatus::Published {
+                should_mark_read = true;
+                detail.summary.read_by_me = true;
+            }
+            detail.clone()
+        };
+        if let Some(user_id) = current_user_id {
+            if should_mark_read {
+                data.post_reads.insert((user_id, post_id));
+            }
+        }
+        detail.summary.read_by_me = current_user_id
+            .map(|user_id| data.post_reads.contains(&(user_id, post_id)))
+            .unwrap_or(false);
+        Ok(detail)
     }
 
     pub fn autosave_draft(
@@ -3914,6 +4204,21 @@ impl ForumStore {
         } else {
             data.pinned_posts.remove(&post_id);
         }
+        Ok(action)
+    }
+
+    fn set_post_lock(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+        locked: bool,
+    ) -> Result<ModerationPostAction, ForumError> {
+        let mut data = self.write_data()?;
+        ensure_admin(&data, admin_id)?;
+        let pinned = data.pinned_posts.contains(&post_id);
+        let post = data.posts.get_mut(&post_id).ok_or(ForumError::NotFound)?;
+        let mut action = ModerationService::build_lock_action(post, locked)?;
+        action.pinned = pinned;
         Ok(action)
     }
 

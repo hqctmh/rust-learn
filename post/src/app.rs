@@ -70,6 +70,8 @@ pub fn api_route_inventory() -> Vec<&'static str> {
         "/api/admin/posts/{post_id}/delete",
         "/api/admin/posts/{post_id}/pin",
         "/api/admin/posts/{post_id}/unpin",
+        "/api/admin/posts/{post_id}/lock",
+        "/api/admin/posts/{post_id}/unlock",
         "/api/admin/comments",
         "/api/admin/comments/{comment_id}/delete",
         "/api/admin/comments/{comment_id}/recover",

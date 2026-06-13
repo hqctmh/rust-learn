@@ -30,6 +30,20 @@ fn homepage_component_loads_data_through_server_state() {
         page_data.contains(".home_page("),
         "home page server function should delegate to AppState::home_page"
     );
+    assert!(
+        page_data.contains("pub async fn load_home_page(")
+            && page_data.contains("query: HomeQuery")
+            && page_data.contains("session_id: String"),
+        "home page server function should accept session context for personalized read markers"
+    );
+    assert!(
+        page_data.contains("current_session(session_id)"),
+        "home page server function should resolve the current session before personalized loading"
+    );
+    assert!(
+        home_page.contains("load_home_page(query, session_id)"),
+        "home page should pass session context into the home loader"
+    );
 }
 
 #[test]
@@ -159,7 +173,12 @@ fn post_detail_page_loads_route_post_and_comments_through_server_state() {
         "post detail page must not hardcode comments"
     );
     assert!(page_data.contains("PostDetailPageData"));
-    assert!(page_data.contains(".post_detail("));
+    assert!(
+        page_data.contains("pub async fn load_post_detail_page(")
+            && page_data.contains("post_id: String")
+            && page_data.contains("session_id: String")
+    );
+    assert!(page_data.contains(".post_detail_for_user("));
     assert!(page_data.contains(".comments_for_post("));
 }
 
@@ -1107,6 +1126,9 @@ fn sqlx_post_repository_contract_maps_homepage_post_rows() {
         "left join tags t on t.tag_id = pt.tag_id",
         "where p.status = 'published'",
         "order by p.is_pinned desc",
+        "p.is_locked",
+        "post_reads",
+        "read_by_me",
         "limit $1 offset $2",
     ] {
         assert!(
@@ -1129,12 +1151,98 @@ fn sqlx_post_repository_contract_maps_homepage_post_rows() {
         like_count: 19,
         favorite_count: 8,
         published_at: Some(time::OffsetDateTime::now_utc()),
+        last_reply_author_name: Some("lin".to_string()),
+        last_reply_author_avatar_url: Some("/lin.png".to_string()),
+        last_reply_at: Some(time::OffsetDateTime::now_utc()),
+        pinned: true,
+        locked: true,
+        read_by_me: true,
     };
     let summary: post::domain::posts::PostSummary = row.into();
     assert_eq!(summary.title, "PostgreSQL 持久化边界");
     assert_eq!(summary.author_name, "mah");
     assert_eq!(summary.tags, vec!["leptos", "sqlx"]);
     assert_eq!(summary.view_count, 128);
+    assert!(summary.pinned);
+    assert!(summary.locked);
+    assert!(summary.read_by_me);
+}
+
+#[test]
+fn home_topic_marker_is_driven_by_post_state_fields() {
+    let mut summary = post::domain::posts::PostSummary::sample();
+
+    summary.pinned = true;
+    summary.locked = true;
+    let pinned = post::domain::home::home_topic_from_post_summary(summary.clone());
+    assert_eq!(pinned.marker, post::domain::home::TopicMarker::Pinned);
+
+    summary.pinned = false;
+    let locked = post::domain::home::home_topic_from_post_summary(summary.clone());
+    assert_eq!(locked.marker, post::domain::home::TopicMarker::Locked);
+
+    summary.locked = false;
+    summary.read_by_me = true;
+    let read = post::domain::home::home_topic_from_post_summary(summary.clone());
+    assert_eq!(read.marker, post::domain::home::TopicMarker::Read);
+
+    summary.read_by_me = false;
+    let unread = post::domain::home::home_topic_from_post_summary(summary);
+    assert_eq!(unread.marker, post::domain::home::TopicMarker::Unread);
+}
+
+#[test]
+fn post_read_records_are_persisted_for_homepage_read_markers() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let migrations = std::fs::read_dir(manifest_dir.join("migrations"))
+        .expect("read migrations")
+        .map(|entry| {
+            let entry = entry.expect("read migration entry");
+            std::fs::read_to_string(entry.path()).expect("read migration source")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let repository = std::fs::read_to_string(manifest_dir.join("src/repositories/posts.rs"))
+        .expect("read post repository source");
+    let state =
+        std::fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read state source");
+
+    for required in [
+        "create table if not exists post_reads",
+        "user_id uuid not null references users",
+        "post_id uuid not null references posts",
+        "read_at timestamptz not null default now()",
+        "primary key (user_id, post_id)",
+    ] {
+        assert!(
+            migrations.contains(required),
+            "post read schema missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "mark_post_read",
+        "insert into post_reads",
+        "on conflict (user_id, post_id) do update",
+        "read_by_me",
+        "left join post_reads",
+    ] {
+        assert!(
+            repository.contains(required),
+            "post read repository missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "post_detail_for_user",
+        "PostgresPostRepository::mark_post_read",
+        "current_user_id",
+    ] {
+        assert!(
+            state.contains(required),
+            "post read state flow missing fragment: {required}"
+        );
+    }
 }
 
 #[test]
@@ -1175,6 +1283,8 @@ fn sqlx_post_detail_repository_contract_maps_post_detail_row() {
         markdown: "# 详情".to_string(),
         sanitized_html: "<h1>详情</h1>".to_string(),
         status: "published".to_string(),
+        pinned: false,
+        locked: false,
     };
     let detail: post::domain::posts::PostDetail = row.into();
     assert_eq!(detail.summary.title, "详情持久化");
@@ -1445,6 +1555,8 @@ fn sqlx_home_sidebar_repository_contract_maps_homepage_sidebar_rows() {
         "from users u",
         "join comments c on c.author_id = u.user_id",
         "c.status = 'visible'",
+        "u.status = 'active'",
+        "c.created_at >= now() - interval '30 days'",
         "group by u.user_id",
         "limit $1",
     ] {
@@ -1811,6 +1923,585 @@ async fn app_state_add_comment_persists_to_postgres_and_updates_post_count() {
         .await
         .expect("load post detail");
     assert_eq!(loaded.summary.comment_count, 1);
+}
+
+#[tokio::test]
+async fn app_state_post_read_records_drive_homepage_read_markers() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("read-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("阅读作者{suffix}"),
+        })
+        .await
+        .expect("register post author");
+    let reader = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("read-reader-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("阅读用户{suffix}"),
+        })
+        .await
+        .expect("register reader");
+
+    let detail = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("首页已读状态帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "阅读记录需要驱动首页状态".to_string(),
+                category_name: Some("讨论".to_string()),
+                tag_names: vec!["read-state".to_string()],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create post");
+
+    let before = state
+        .home_page(
+            post::domain::home::HomeQuery::default(),
+            Some(reader.user.user_id),
+        )
+        .await
+        .expect("home before read");
+    let topic_before = before
+        .topics
+        .iter()
+        .find(|topic| topic.id == detail.summary.post_id.to_string())
+        .expect("topic before read");
+    assert_eq!(topic_before.marker, post::domain::home::TopicMarker::Unread);
+
+    state
+        .post_detail_for_user(detail.summary.post_id, Some(reader.user.user_id))
+        .await
+        .expect("read post detail with reader context");
+
+    let after = state
+        .home_page(
+            post::domain::home::HomeQuery::default(),
+            Some(reader.user.user_id),
+        )
+        .await
+        .expect("home after read");
+    let topic_after = after
+        .topics
+        .iter()
+        .find(|topic| topic.id == detail.summary.post_id.to_string())
+        .expect("topic after read");
+    assert_eq!(topic_after.marker, post::domain::home::TopicMarker::Read);
+}
+
+#[tokio::test]
+async fn app_state_post_detail_increments_postgres_view_count_for_homepage() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("view-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("浏览作者{suffix}"),
+        })
+        .await
+        .expect("register author");
+    let category = format!("浏览分类-{suffix}");
+    let tag = format!("view-tag-{suffix}");
+    let detail = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("浏览计数帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "详情访问后首页查看数需要更新".to_string(),
+                category_name: Some(category.clone()),
+                tag_names: vec![tag.clone()],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create post");
+
+    let viewed = state
+        .post_detail_for_user(detail.summary.post_id, Some(author.user.user_id))
+        .await
+        .expect("view post detail");
+    assert_eq!(viewed.summary.view_count, 1);
+
+    let home = state
+        .home_page(
+            post::domain::home::HomeQuery {
+                category: Some(category),
+                tag: Some(tag),
+                page: 1,
+                page_size: 10,
+                ..Default::default()
+            },
+            Some(author.user.user_id),
+        )
+        .await
+        .expect("load home");
+    let topic = home
+        .topics
+        .iter()
+        .find(|topic| topic.id == detail.summary.post_id.to_string())
+        .expect("home topic");
+    assert_eq!(topic.view_count_label, "1");
+}
+
+#[tokio::test]
+async fn app_state_homepage_postgres_respects_query_pagination() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("page-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("分页作者{suffix}"),
+        })
+        .await
+        .expect("register author");
+
+    state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("首页分页帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "首页分页必须使用查询参数".to_string(),
+                category_name: Some("讨论".to_string()),
+                tag_names: vec!["pagination".to_string()],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create post");
+
+    let home = state
+        .home_page(
+            post::domain::home::HomeQuery {
+                page: 1,
+                page_size: 1,
+                ..Default::default()
+            },
+            Some(author.user.user_id),
+        )
+        .await
+        .expect("load paged home");
+
+    assert_eq!(home.query.page, 1);
+    assert_eq!(home.query.page_size, 1);
+    assert_eq!(home.topics.len(), 1);
+}
+
+#[tokio::test]
+async fn app_state_homepage_postgres_reports_filtered_pagination_totals() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("total-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("分页总数作者{suffix}"),
+        })
+        .await
+        .expect("register author");
+    let category = format!("分页总数分类-{suffix}");
+    let tag = format!("total-tag-{suffix}");
+
+    for index in 1..=3 {
+        state
+            .create_post(
+                author.user.user_id,
+                post::domain::posts::CreatePostRequest {
+                    title: format!("首页分页总数帖子 {suffix}-{index}"),
+                    markdown: "正文".to_string(),
+                    summary: "筛选分页总数必须来自同一套查询条件".to_string(),
+                    category_name: Some(category.clone()),
+                    tag_names: vec![tag.clone()],
+                    publish: true,
+                },
+            )
+            .await
+            .expect("create filtered post");
+    }
+
+    let home = state
+        .home_page(
+            post::domain::home::HomeQuery {
+                category: Some(category),
+                tag: Some(tag),
+                page: 1,
+                page_size: 2,
+                ..Default::default()
+            },
+            Some(author.user.user_id),
+        )
+        .await
+        .expect("load filtered paged home");
+
+    assert_eq!(home.topics.len(), 2);
+    assert_eq!(home.pagination.total, 3);
+    assert_eq!(home.pagination.total_pages, 2);
+    assert_eq!(home.pagination.label, "显示 1-2 / 3 个主题");
+}
+
+#[tokio::test]
+async fn app_state_homepage_postgres_applies_category_tag_unanswered_and_sort_filters() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("filter-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("筛选作者{suffix}"),
+        })
+        .await
+        .expect("register author");
+
+    let wanted = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("首页筛选目标 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "分类标签和未回复筛选应该命中这个帖子".to_string(),
+                category_name: Some(format!("筛选分类-{suffix}")),
+                tag_names: vec![format!("filter-tag-{suffix}")],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create wanted post");
+    let filtered = state
+        .home_page(
+            post::domain::home::HomeQuery {
+                tab: post::domain::home::HomeTab::Unanswered,
+                category: Some(format!("筛选分类-{suffix}")),
+                tag: Some(format!("filter-tag-{suffix}")),
+                sort: post::domain::home::HomeSort::Views,
+                page: 1,
+                page_size: 20,
+                ..Default::default()
+            },
+            Some(author.user.user_id),
+        )
+        .await
+        .expect("load filtered home");
+
+    assert!(
+        filtered
+            .topics
+            .iter()
+            .any(|topic| topic.id == wanted.summary.post_id.to_string()),
+        "wanted filtered topic should be present"
+    );
+    assert!(
+        filtered
+            .topics
+            .iter()
+            .all(|topic| topic.category.name == format!("筛选分类-{suffix}"))
+    );
+    assert!(filtered.topics.iter().all(|topic| {
+        topic
+            .tags
+            .iter()
+            .any(|tag| tag.name == format!("filter-tag-{suffix}"))
+    }));
+    assert!(filtered.topics.iter().all(|topic| topic.reply_count == 0));
+}
+
+#[tokio::test]
+async fn app_state_homepage_postgres_applies_time_filter() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool.clone()),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("time-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("时间作者{suffix}"),
+        })
+        .await
+        .expect("register author");
+
+    let recent = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("近期首页帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "近期帖子应该出现在今日过滤中".to_string(),
+                category_name: Some(format!("时间分类-{suffix}")),
+                tag_names: vec![format!("time-tag-{suffix}")],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create recent post");
+    let old = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("旧首页帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "旧帖子不应该出现在今日过滤中".to_string(),
+                category_name: Some(format!("时间分类-{suffix}")),
+                tag_names: vec![format!("time-tag-{suffix}")],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create old post");
+
+    sqlx::query!(
+        r#"
+update posts
+set published_at = now() - interval '40 days',
+    created_at = now() - interval '40 days'
+where post_id = $1
+"#,
+        old.summary.post_id
+    )
+    .execute(&pool)
+    .await
+    .expect("age old post");
+
+    let today = state
+        .home_page(
+            post::domain::home::HomeQuery {
+                category: Some(format!("时间分类-{suffix}")),
+                tag: Some(format!("time-tag-{suffix}")),
+                time: post::domain::home::HomeTimeRange::Today,
+                page: 1,
+                page_size: 20,
+                ..Default::default()
+            },
+            Some(author.user.user_id),
+        )
+        .await
+        .expect("load today home");
+
+    assert!(
+        today
+            .topics
+            .iter()
+            .any(|topic| topic.id == recent.summary.post_id.to_string())
+    );
+    assert!(
+        today
+            .topics
+            .iter()
+            .all(|topic| topic.id != old.summary.post_id.to_string())
+    );
+}
+
+#[tokio::test]
+async fn app_state_homepage_postgres_filters_following_tab_by_followed_authors() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let viewer = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("following-viewer-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("关注读者{suffix}"),
+        })
+        .await
+        .expect("register viewer");
+    let followed = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("following-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("关注作者{suffix}"),
+        })
+        .await
+        .expect("register followed");
+
+    state
+        .follow_user(viewer.user.user_id, followed.user.user_id)
+        .await
+        .expect("follow author");
+
+    let followed_post = state
+        .create_post(
+            followed.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("关注动态帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "关注 Tab 应该展示关注作者的帖子".to_string(),
+                category_name: Some(format!("关注分类-{suffix}")),
+                tag_names: vec![format!("following-tag-{suffix}")],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create followed post");
+
+    let following = state
+        .home_page(
+            post::domain::home::HomeQuery {
+                tab: post::domain::home::HomeTab::Following,
+                page: 1,
+                page_size: 20,
+                ..Default::default()
+            },
+            Some(viewer.user.user_id),
+        )
+        .await
+        .expect("load following home");
+
+    assert!(!following.requires_login);
+    assert!(
+        following
+            .topics
+            .iter()
+            .any(|topic| topic.id == followed_post.summary.post_id.to_string())
+    );
+    assert!(
+        following
+            .topics
+            .iter()
+            .all(|topic| topic.last_reply.author == followed.user.nickname)
+    );
+}
+
+#[tokio::test]
+async fn app_state_homepage_postgres_uses_latest_visible_comment_for_last_reply() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("last-reply-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("原作者{suffix}"),
+        })
+        .await
+        .expect("register author");
+    let commenter = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("last-reply-commenter-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("最新回复者{suffix}"),
+        })
+        .await
+        .expect("register commenter");
+    let category = format!("最后回复分类-{suffix}");
+    let tag = format!("last-reply-tag-{suffix}");
+    let detail = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("首页最后回复帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "首页最后回复列应来自最新评论".to_string(),
+                category_name: Some(category.clone()),
+                tag_names: vec![tag.clone()],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create post");
+
+    state
+        .add_comment(
+            commenter.user.user_id,
+            post::domain::comments::CreateCommentRequest {
+                post_id: detail.summary.post_id,
+                parent_comment_id: None,
+                content: "最新回复".to_string(),
+            },
+        )
+        .await
+        .expect("add latest comment");
+
+    let home = state
+        .home_page(
+            post::domain::home::HomeQuery {
+                category: Some(category),
+                tag: Some(tag),
+                page: 1,
+                page_size: 10,
+                ..Default::default()
+            },
+            Some(author.user.user_id),
+        )
+        .await
+        .expect("load home");
+    let topic = home
+        .topics
+        .iter()
+        .find(|topic| topic.id == detail.summary.post_id.to_string())
+        .expect("home topic");
+
+    assert_eq!(topic.last_reply.author, commenter.user.nickname);
+    assert_eq!(
+        topic.last_reply.avatar_label,
+        commenter
+            .user
+            .nickname
+            .chars()
+            .next()
+            .expect("commenter nickname char")
+            .to_string()
+    );
+    assert_ne!(topic.last_reply.time_label, "已发布");
 }
 
 #[tokio::test]
@@ -5230,6 +5921,45 @@ fn admin_dashboard_requires_admin_and_exposes_rbac_menu() {
 }
 
 #[test]
+fn admin_audit_log_csv_export_escapes_values() {
+    let audit = vec![post::domain::admin::AuditEntry {
+        actor: "张三".to_string(),
+        action: "导出,审计".to_string(),
+        target: "帖子 \"SQLx\"".to_string(),
+        ip: "127.0.0.1".to_string(),
+        user_agent: "Mozilla\nSafari".to_string(),
+        time_label: "2026-06-13 10:00".to_string(),
+    }];
+
+    let csv = post::domain::admin::audit_entries_csv(&audit);
+
+    assert!(csv.starts_with("actor,action,target,ip,user_agent,time_label\n"));
+    assert!(csv.contains("\"导出,审计\""));
+    assert!(csv.contains("\"帖子 \"\"SQLx\"\"\""));
+    assert!(csv.contains("\"Mozilla\nSafari\""));
+}
+
+#[test]
+fn admin_page_exports_audit_logs_as_csv_download() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "audit_entries_csv",
+        "audit_csv_href",
+        "download=\"audit-logs.csv\"",
+        "href=audit_csv_href",
+        "导出审计日志",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin audit export UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn admin_page_disables_and_enables_users_with_session_actions() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
@@ -5289,6 +6019,57 @@ fn admin_page_disables_and_enables_users_with_session_actions() {
         assert!(
             admin_page.contains(required),
             "admin user status UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_updates_user_roles_with_session_action() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "pub async fn update_admin_user_roles(",
+        "target_user_id: String",
+        "roles: String",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&target_user_id)",
+        "UpdateUserRolesRequest",
+        "role_codes(&roles)",
+        ".update_user_roles(",
+        "AuditContext::default()",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin user role server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "UpdateAdminUserRoles",
+        "ServerAction::<UpdateAdminUserRoles>::new()",
+        "let update_user_roles_result = update_user_roles_action.value()",
+        "update_user_roles_action",
+        "update_user_roles_pending",
+        "ActionForm action=update_user_roles_action",
+        "name=\"session_id\"",
+        "name=\"target_user_id\"",
+        "name=\"roles\"",
+        "value=user.user_id.to_string()",
+        "let role_value = user.roles.join(\",\")",
+        "value=role_value",
+        "placeholder=\"角色编码，逗号分隔\"",
+        "调整角色",
+        "用户角色更新成功",
+        "用户角色更新失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin user role UI missing fragment: {required}"
         );
     }
 }
@@ -5368,6 +6149,72 @@ fn admin_page_moderates_posts_with_session_actions() {
 }
 
 #[test]
+fn admin_page_locks_and_unlocks_posts_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let migrations = std::fs::read_dir(manifest_dir.join("migrations"))
+        .expect("read migrations")
+        .map(|entry| {
+            let entry = entry.expect("read migration entry");
+            std::fs::read_to_string(entry.path()).expect("read migration source")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let moderation_domain = std::fs::read_to_string(manifest_dir.join("src/domain/moderation.rs"))
+        .expect("read moderation domain source");
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let repository = std::fs::read_to_string(manifest_dir.join("src/repositories/moderation.rs"))
+        .expect("read moderation repository source");
+
+    for required in ["is_locked boolean not null default false", "p.is_locked"] {
+        assert!(
+            migrations.contains(required) || repository.contains(required),
+            "post lock schema/repository missing fragment: {required}"
+        );
+    }
+
+    for required in ["pub locked: bool", "locked: row.locked"] {
+        assert!(
+            moderation_domain.contains(required) || repository.contains(required),
+            "post lock moderation DTO missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn lock_admin_post(",
+        "pub async fn unlock_admin_post(",
+        ".lock_post(",
+        ".unlock_post(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin post lock server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "LockAdminPost",
+        "UnlockAdminPost",
+        "ServerAction::<LockAdminPost>::new()",
+        "ServerAction::<UnlockAdminPost>::new()",
+        "ActionForm action=lock_post_action",
+        "ActionForm action=unlock_post_action",
+        "lock_post_pending",
+        "unlock_post_pending",
+        "锁定",
+        "解锁",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin post lock UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn admin_page_moderates_comments_with_session_actions() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
@@ -5421,6 +6268,45 @@ fn admin_page_moderates_comments_with_session_actions() {
         assert!(
             admin_page.contains(required),
             "admin comment moderation UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_links_moderation_rows_to_post_detail_pages() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let admin_domain = std::fs::read_to_string(manifest_dir.join("src/domain/admin.rs"))
+        .expect("read admin domain source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let state_source =
+        std::fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read state source");
+
+    for required in [
+        "pub post_id: Uuid,",
+        "AdminCommentRow {",
+        "post_id:",
+        "comment.post_id",
+    ] {
+        assert!(
+            admin_domain.contains(required)
+                || admin_page.contains(required)
+                || state_source.contains(required),
+            "admin moderation row link support missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "let post_href = format!(\"/posts/{}\", post.post_id)",
+        "let comment_post_href = format!(\"/posts/{}\", comment.post_id)",
+        "<a class=\"btn btn-ghost btn-xs\" href=post_href>",
+        "<a class=\"btn btn-ghost btn-xs\" href=comment_post_href>",
+        "查看帖子",
+        "查看",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin moderation row link UI missing fragment: {required}"
         );
     }
 }
@@ -5486,6 +6372,28 @@ fn admin_page_handles_reports_with_session_actions() {
 }
 
 #[test]
+fn admin_page_expands_report_details() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "<details class=\"admin-inline-details\">",
+        "<summary class=\"btn btn-ghost btn-xs\">\"查看详情\"</summary>",
+        "report-detail-list",
+        "report.target.clone()",
+        "report.reason.clone()",
+        "report.reporter.clone()",
+        "report.status.clone()",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin report detail UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn admin_page_publishes_and_withdraws_announcements_with_session_actions() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
@@ -5534,7 +6442,7 @@ fn admin_page_publishes_and_withdraws_announcements_with_session_actions() {
         "ActionForm action=withdraw_announcement_action",
         "name=\"session_id\"",
         "name=\"announcement_id\"",
-        "value=announcement.announcement_id.to_string()",
+        "value=form_announcement_id",
         "发布公告",
         "下线公告",
         "重新发布",
@@ -5544,6 +6452,648 @@ fn admin_page_publishes_and_withdraws_announcements_with_session_actions() {
         assert!(
             admin_page.contains(required),
             "admin announcement UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_edits_and_pushes_announcements_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let state_source =
+        std::fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read state source");
+
+    for required in [
+        "pub async fn update_admin_announcement(",
+        "pub async fn push_admin_announcement(",
+        "title: String",
+        "content: String",
+        "announcement_type: String",
+        "pinned: bool",
+        ".update_announcement(",
+        ".push_announcement(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin announcement edit/push server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn update_announcement(",
+        "pub async fn push_announcement(",
+        "UpdateAnnouncementRequest",
+        "PostgresAnnouncementRepository::update_announcement(",
+        "announcement_published_actions(&announcement)",
+    ] {
+        assert!(
+            state_source.contains(required),
+            "admin announcement edit/push state support missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "UpdateAdminAnnouncement",
+        "PushAdminAnnouncement",
+        "ServerAction::<UpdateAdminAnnouncement>::new()",
+        "ServerAction::<PushAdminAnnouncement>::new()",
+        "let update_announcement_result = update_announcement_action.value()",
+        "let push_announcement_result = push_announcement_action.value()",
+        "ActionForm action=update_announcement_action",
+        "ActionForm action=push_announcement_action",
+        "name=\"title\"",
+        "name=\"content\"",
+        "name=\"announcement_type\"",
+        "name=\"pinned\"",
+        "推送公告",
+        "编辑公告",
+        "公告更新成功",
+        "公告推送成功",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin announcement edit/push UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_creates_announcements_with_session_action() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "pub async fn create_admin_announcement(",
+        "title: String",
+        "content: String",
+        "announcement_type: String",
+        "pinned: bool",
+        "CreateAnnouncementRequest",
+        ".create_announcement(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin announcement create server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "CreateAdminAnnouncement",
+        "ServerAction::<CreateAdminAnnouncement>::new()",
+        "let create_announcement_result = create_announcement_action.value()",
+        "ActionForm action=create_announcement_action",
+        "name=\"session_id\"",
+        "name=\"title\"",
+        "name=\"content\"",
+        "name=\"announcement_type\"",
+        "name=\"pinned\"",
+        "发布公告",
+        "公告创建成功",
+        "公告创建失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin announcement create UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_configures_announcement_effective_and_expiry_times() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "effective_at: String",
+        "expires_at: String",
+        "parse_optional_announcement_time(&effective_at)",
+        "parse_optional_announcement_time(&expires_at)",
+        "effective_at: parse_optional_announcement_time(&effective_at)?",
+        "expires_at: parse_optional_announcement_time(&expires_at)?",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin announcement time server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "name=\"effective_at\"",
+        "name=\"expires_at\"",
+        "type=\"datetime-local\"",
+        "placeholder=\"生效时间\"",
+        "placeholder=\"失效时间\"",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin announcement time UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_toggles_taxonomy_status_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let admin_domain = std::fs::read_to_string(manifest_dir.join("src/domain/admin.rs"))
+        .expect("read admin domain source");
+
+    for required in [
+        "pub category_id: Uuid,",
+        "pub tag_id: Uuid,",
+        "AdminCategoryRow {",
+        "AdminTagRow {",
+        "category_id:",
+        "tag_id:",
+    ] {
+        assert!(
+            admin_domain.contains(required),
+            "admin taxonomy rows should expose target ids fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn enable_admin_category(",
+        "pub async fn disable_admin_category(",
+        "pub async fn enable_admin_tag(",
+        "pub async fn disable_admin_tag(",
+        "category_id: String",
+        "tag_id: String",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&category_id)",
+        "Uuid::parse_str(&tag_id)",
+        ".current_session(session_id)",
+        ".update_category(",
+        ".disable_category(",
+        ".update_tag(",
+        "UpdateCategoryRequest",
+        "UpdateTagRequest",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin taxonomy server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "EnableAdminCategory",
+        "DisableAdminCategory",
+        "EnableAdminTag",
+        "DisableAdminTag",
+        "ServerAction::<EnableAdminCategory>::new()",
+        "ServerAction::<DisableAdminCategory>::new()",
+        "ServerAction::<EnableAdminTag>::new()",
+        "ServerAction::<DisableAdminTag>::new()",
+        "let enable_category_result = enable_category_action.value()",
+        "let disable_category_result = disable_category_action.value()",
+        "let enable_tag_result = enable_tag_action.value()",
+        "let disable_tag_result = disable_tag_action.value()",
+        "ActionForm action=enable_category_action",
+        "ActionForm action=disable_category_action",
+        "ActionForm action=enable_tag_action",
+        "ActionForm action=disable_tag_action",
+        "name=\"session_id\"",
+        "name=\"category_id\"",
+        "name=\"tag_id\"",
+        "value=category.category_id.to_string()",
+        "value=tag.tag_id.to_string()",
+        "启用",
+        "停用",
+        "禁用",
+        "分类状态更新成功",
+        "分类状态更新失败",
+        "标签状态更新成功",
+        "标签状态更新失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin taxonomy UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_merges_tags_with_session_action() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "pub async fn merge_admin_tag(",
+        "source_tag_id: String",
+        "target_tag_id: String",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&source_tag_id)",
+        "Uuid::parse_str(&target_tag_id)",
+        ".current_session(session_id)",
+        ".merge_tag(",
+        "MergeTagRequest",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin tag merge server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "MergeAdminTag",
+        "ServerAction::<MergeAdminTag>::new()",
+        "let merge_tag_result = merge_tag_action.value()",
+        "let tag_options = current_dashboard.get().tags",
+        "tag_options=tag_options.clone()",
+        "merge_tag_action",
+        "merge_tag_pending",
+        "ActionForm action=merge_tag_action",
+        "name=\"session_id\"",
+        "name=\"source_tag_id\"",
+        "name=\"target_tag_id\"",
+        "value=tag.tag_id.to_string()",
+        "value=target.tag_id.to_string()",
+        "合并标签",
+        "合并到",
+        "标签合并成功",
+        "标签合并失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin tag merge UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_updates_categories_with_session_action() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "pub async fn update_admin_category(",
+        "category_id: String",
+        "name: String",
+        "color: String",
+        "sort_order: i32",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&category_id)",
+        ".current_session(session_id)",
+        "UpdateCategoryRequest",
+        "name: Some(name)",
+        "color: Some(color)",
+        "sort_order: Some(sort_order)",
+        ".update_category(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin category update server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "UpdateAdminCategory",
+        "ServerAction::<UpdateAdminCategory>::new()",
+        "let update_category_result = update_category_action.value()",
+        "update_category_action",
+        "update_category_pending",
+        "ActionForm action=update_category_action",
+        "name=\"session_id\"",
+        "name=\"category_id\"",
+        "name=\"name\"",
+        "name=\"color\"",
+        "name=\"sort_order\"",
+        "value=category.category_id.to_string()",
+        "value=category.name.clone()",
+        "value=category.color.clone()",
+        "value=category.sort_order",
+        "更新分类",
+        "分类更新成功",
+        "分类更新失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin category update UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_updates_tags_with_session_action() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "pub async fn update_admin_tag(",
+        "tag_id: String",
+        "name: String",
+        "sort_order: i32",
+        "Uuid::parse_str(&session_id)",
+        "Uuid::parse_str(&tag_id)",
+        ".current_session(session_id)",
+        "UpdateTagRequest",
+        "name: Some(name)",
+        "sort_order: Some(sort_order)",
+        ".update_tag(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin tag update server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "UpdateAdminTag",
+        "ServerAction::<UpdateAdminTag>::new()",
+        "let update_tag_result = update_tag_action.value()",
+        "update_tag_action",
+        "update_tag_pending",
+        "ActionForm action=update_tag_action",
+        "name=\"session_id\"",
+        "name=\"tag_id\"",
+        "name=\"name\"",
+        "name=\"sort_order\"",
+        "value=tag.tag_id.to_string()",
+        "value=tag.name.clone()",
+        "value=tag.sort_order",
+        "更新标签",
+        "标签更新成功",
+        "标签更新失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin tag update UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_creates_taxonomy_items_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "pub async fn create_admin_category(",
+        "pub async fn create_admin_tag(",
+        "name: String",
+        "color: String",
+        "sort_order: i32",
+        "Uuid::parse_str(&session_id)",
+        ".current_session(session_id)",
+        "CreateCategoryRequest",
+        "CreateTagRequest",
+        ".create_category(",
+        ".create_tag(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin taxonomy create server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "CreateAdminCategory",
+        "CreateAdminTag",
+        "ServerAction::<CreateAdminCategory>::new()",
+        "ServerAction::<CreateAdminTag>::new()",
+        "let create_category_result = create_category_action.value()",
+        "let create_tag_result = create_tag_action.value()",
+        "create_category_action",
+        "create_tag_action",
+        "create_category_pending",
+        "create_tag_pending",
+        "ActionForm action=create_category_action",
+        "ActionForm action=create_tag_action",
+        "name=\"session_id\"",
+        "name=\"name\"",
+        "name=\"color\"",
+        "name=\"sort_order\"",
+        "placeholder=\"分类名称\"",
+        "placeholder=\"#0064E0\"",
+        "placeholder=\"标签名称\"",
+        "创建分类",
+        "创建标签",
+        "分类创建成功",
+        "分类创建失败",
+        "标签创建成功",
+        "标签创建失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin taxonomy create UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_page_renders_roles_from_dashboard_data() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let admin_domain = std::fs::read_to_string(manifest_dir.join("src/domain/admin.rs"))
+        .expect("read admin domain source");
+    let state =
+        std::fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read state source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "rbac::{Permission, Role, admin_permissions}",
+        "pub roles: Vec<Role>",
+        "roles: demo_roles()",
+    ] {
+        assert!(
+            admin_domain.contains(required),
+            "admin dashboard role domain missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "let roles = self.list_roles(user_id).await?",
+        "dashboard.roles = roles",
+        "dashboard.roles = sorted_roles(data.roles.values().cloned())",
+    ] {
+        assert!(
+            state.contains(required),
+            "admin dashboard role data source missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "let roles = current_dashboard.get().roles",
+        "RoleRow",
+        "role.permissions.len()",
+        "role_permission_summary(&role)",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin role table UI missing fragment: {required}"
+        );
+    }
+
+    assert!(
+        !admin_page.contains("<tr><td>\"admin\"</td><td>\"管理员\"</td><td>\"全部权限\""),
+        "admin role table must not hard-code role rows"
+    );
+}
+
+#[test]
+fn admin_page_expands_role_permission_details() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "<details class=\"admin-inline-details\">",
+        "<summary class=\"btn btn-ghost btn-xs\">\"查看权限\"</summary>",
+        "role.permissions.iter()",
+        "permission.code.clone()",
+        "permission.name.clone()",
+        "permission-list",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin role permission detail UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn admin_permission_shortcuts_link_to_page_sections() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "id=\"admin-users\"",
+        "id=\"admin-roles\"",
+        "id=\"admin-posts\"",
+        "id=\"admin-permissions\"",
+        "id=\"admin-audit\"",
+        "href=\"#admin-users\"",
+        "href=\"#admin-roles\"",
+        "href=\"#admin-posts\"",
+        "href=\"#admin-permissions\"",
+        "href=\"#admin-audit\"",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin permission shortcut missing fragment: {required}"
+        );
+    }
+
+    assert!(
+        !admin_page.contains("href=\"/admin\">\"user:view\""),
+        "admin permission shortcuts should not point back to /admin"
+    );
+
+    assert!(
+        admin_page.contains("id=\"admin-posts\">\n                            <h2>\"帖子管理\""),
+        "admin posts shortcut should target the posts management section"
+    );
+    assert!(
+        admin_page.contains("id=\"admin-audit\">\n                            <h2>\"审计日志\""),
+        "admin audit shortcut should target the audit log section"
+    );
+    assert_eq!(
+        admin_page.matches("id=\"admin-audit\"").count(),
+        1,
+        "admin audit section id should be unique"
+    );
+}
+
+#[test]
+fn admin_page_manages_roles_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+
+    for required in [
+        "pub async fn create_admin_role(",
+        "pub async fn update_admin_role(",
+        "pub async fn delete_admin_role(",
+        "role_code: String",
+        "permission_codes: String",
+        "CreateRoleRequest",
+        "UpdateRoleRequest",
+        "AuditContext::default()",
+        "role_permission_codes(&permission_codes)",
+        ".create_role(",
+        ".update_role(",
+        ".delete_role(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin role server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "CreateAdminRole",
+        "UpdateAdminRole",
+        "DeleteAdminRole",
+        "ServerAction::<CreateAdminRole>::new()",
+        "ServerAction::<UpdateAdminRole>::new()",
+        "ServerAction::<DeleteAdminRole>::new()",
+        "let create_role_result = create_role_action.value()",
+        "let update_role_result = update_role_action.value()",
+        "let delete_role_result = delete_role_action.value()",
+        "ActionForm action=create_role_action",
+        "ActionForm action=update_role_action",
+        "ActionForm action=delete_role_action",
+        "name=\"session_id\"",
+        "name=\"role_code\"",
+        "name=\"code\"",
+        "name=\"name\"",
+        "name=\"permission_codes\"",
+        "placeholder=\"角色编码\"",
+        "placeholder=\"角色名称\"",
+        "placeholder=\"权限编码，逗号分隔\"",
+        "value=update_role_code",
+        "value=delete_role_code",
+        "value=role_name.clone()",
+        "value=permission_codes.clone()",
+        "role_permission_codes_value(&role)",
+        "创建角色",
+        "更新角色",
+        "删除角色",
+        "角色创建成功",
+        "角色创建失败",
+        "角色更新成功",
+        "角色更新失败",
+        "角色删除成功",
+        "角色删除失败",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin role UI action missing fragment: {required}"
         );
     }
 }
@@ -6327,6 +7877,87 @@ fn announcement_contract_supports_publish_push_withdraw_and_read_state() {
 }
 
 #[test]
+fn announcement_contract_updates_and_pushes_existing_announcements() {
+    let store = post::state::ForumStore::seeded();
+    let admin = store.demo_user();
+    let member = store
+        .login("reader", "password")
+        .expect("login member")
+        .user;
+    let draft = store
+        .create_announcement(
+            admin.user_id,
+            post::domain::announcements::CreateAnnouncementRequest {
+                title: "维护通知草稿".to_string(),
+                content: "今晚 22:00 维护。".to_string(),
+                announcement_type: "maintenance".to_string(),
+                pinned: false,
+                effective_at: None,
+                expires_at: None,
+                audience: post::domain::announcements::AnnouncementAudience::AllUsers,
+            },
+        )
+        .expect("create announcement");
+
+    let updated = store
+        .update_announcement(
+            admin.user_id,
+            draft.announcement_id,
+            post::domain::announcements::UpdateAnnouncementRequest {
+                title: "论坛维护通知".to_string(),
+                content: "今晚 23:00 将进行搜索索引升级。".to_string(),
+                announcement_type: "maintenance".to_string(),
+                pinned: true,
+                effective_at: None,
+                expires_at: None,
+                audience: post::domain::announcements::AnnouncementAudience::AllUsers,
+            },
+        )
+        .expect("update announcement");
+    assert_eq!(updated.title, "论坛维护通知");
+    assert_eq!(updated.content, "今晚 23:00 将进行搜索索引升级。");
+    assert!(updated.pinned);
+    assert_eq!(
+        updated.status,
+        post::domain::announcements::AnnouncementStatus::Draft
+    );
+
+    store
+        .publish_announcement(admin.user_id, draft.announcement_id)
+        .expect("publish announcement");
+    let before_push_count = store
+        .notification_center(member.user_id)
+        .expect("member notifications before push")
+        .items
+        .iter()
+        .filter(|item| {
+            item.notification_type == post::domain::notifications::NotificationType::Announcement
+                && item.title == "论坛维护通知"
+        })
+        .count();
+
+    let pushed = store
+        .push_announcement(admin.user_id, draft.announcement_id)
+        .expect("push announcement");
+    assert_eq!(
+        pushed.status,
+        post::domain::announcements::AnnouncementStatus::Published
+    );
+
+    let after_push_count = store
+        .notification_center(member.user_id)
+        .expect("member notifications after push")
+        .items
+        .iter()
+        .filter(|item| {
+            item.notification_type == post::domain::notifications::NotificationType::Announcement
+                && item.title == "论坛维护通知"
+        })
+        .count();
+    assert!(after_push_count > before_push_count);
+}
+
+#[test]
 fn announcement_service_builds_and_transitions_announcements() {
     let announcement_id = uuid::Uuid::from_u128(1101);
     let creator_id = uuid::Uuid::from_u128(1102);
@@ -6720,10 +8351,17 @@ fn moderation_service_applies_post_and_comment_actions() {
             like_count: 0,
             favorite_count: 0,
             published_at: Some(now),
+            last_reply_author_name: None,
+            last_reply_author_avatar_url: None,
+            last_reply_at: None,
+            pinned: false,
+            locked: false,
+            read_by_me: false,
         },
         markdown: "正文".to_string(),
         sanitized_html: "<p>正文</p>".to_string(),
         status: post::domain::posts::PostStatus::Published,
+        locked: false,
         liked_by_me: false,
         favorited_by_me: false,
         following_author: false,
@@ -7045,6 +8683,8 @@ fn content_moderation_routes_are_registered() {
     assert!(routes.contains(&"/api/admin/posts/{post_id}/delete"));
     assert!(routes.contains(&"/api/admin/posts/{post_id}/pin"));
     assert!(routes.contains(&"/api/admin/posts/{post_id}/unpin"));
+    assert!(routes.contains(&"/api/admin/posts/{post_id}/lock"));
+    assert!(routes.contains(&"/api/admin/posts/{post_id}/unlock"));
     assert!(routes.contains(&"/api/admin/comments"));
     assert!(routes.contains(&"/api/admin/comments/{comment_id}/delete"));
     assert!(routes.contains(&"/api/admin/comments/{comment_id}/recover"));

@@ -25,6 +25,12 @@ pub struct PostSummary {
     pub like_count: i64,
     pub favorite_count: i64,
     pub published_at: Option<OffsetDateTime>,
+    pub last_reply_author_name: Option<String>,
+    pub last_reply_author_avatar_url: Option<String>,
+    pub last_reply_at: Option<OffsetDateTime>,
+    pub pinned: bool,
+    pub locked: bool,
+    pub read_by_me: bool,
 }
 
 impl PostSummary {
@@ -43,6 +49,12 @@ impl PostSummary {
             like_count: 19,
             favorite_count: 8,
             published_at: None,
+            last_reply_author_name: None,
+            last_reply_author_avatar_url: None,
+            last_reply_at: None,
+            pinned: false,
+            locked: false,
+            read_by_me: false,
         }
     }
 }
@@ -53,6 +65,7 @@ pub struct PostDetail {
     pub markdown: String,
     pub sanitized_html: String,
     pub status: PostStatus,
+    pub locked: bool,
     pub liked_by_me: bool,
     pub favorited_by_me: bool,
     pub following_author: bool,

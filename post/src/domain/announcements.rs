@@ -51,6 +51,39 @@ impl CreateAnnouncementRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct UpdateAnnouncementRequest {
+    pub title: String,
+    pub content: String,
+    pub announcement_type: String,
+    pub pinned: bool,
+    pub effective_at: Option<OffsetDateTime>,
+    pub expires_at: Option<OffsetDateTime>,
+    pub audience: AnnouncementAudience,
+}
+
+impl UpdateAnnouncementRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.title.trim().is_empty() {
+            return Err("公告标题不能为空".to_string());
+        }
+        if self.content.trim().is_empty() {
+            return Err("公告内容不能为空".to_string());
+        }
+        if self.announcement_type.trim().is_empty() {
+            return Err("公告类型不能为空".to_string());
+        }
+        if self
+            .expires_at
+            .zip(self.effective_at)
+            .is_some_and(|(expires_at, effective_at)| expires_at <= effective_at)
+        {
+            return Err("失效时间必须晚于生效时间".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AnnouncementItem {
     pub announcement_id: Uuid,
     pub title: String,

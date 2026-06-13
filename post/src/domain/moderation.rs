@@ -12,6 +12,7 @@ pub struct ModerationPostRow {
     pub category_name: Option<String>,
     pub status: PostStatus,
     pub pinned: bool,
+    pub locked: bool,
     pub comment_count: i64,
     pub view_count: i64,
     pub updated_at: Option<OffsetDateTime>,
@@ -33,6 +34,7 @@ pub struct ModerationPostAction {
     pub post_id: Uuid,
     pub status: PostStatus,
     pub pinned: bool,
+    pub locked: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

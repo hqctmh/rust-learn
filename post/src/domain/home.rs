@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::domain::posts::PostSummary;
 
@@ -173,11 +174,22 @@ pub fn dense_workbench_home(query: HomeQuery, logged_in: bool) -> HomePageData {
 
 pub fn home_topic_from_post_summary(summary: PostSummary) -> HomeTopic {
     let category_name = summary.category_name.unwrap_or_else(|| "讨论".to_string());
-    let author_name = summary.author_name;
+    let author_name = summary
+        .last_reply_author_name
+        .unwrap_or_else(|| summary.author_name.clone());
+    let reply_time = summary.last_reply_at.or(summary.published_at);
 
     HomeTopic {
         id: summary.post_id.to_string(),
-        marker: TopicMarker::Unread,
+        marker: if summary.pinned {
+            TopicMarker::Pinned
+        } else if summary.locked {
+            TopicMarker::Locked
+        } else if summary.read_by_me {
+            TopicMarker::Read
+        } else {
+            TopicMarker::Unread
+        },
         title: summary.title,
         summary: summary.summary,
         category: HomeCategoryBadge {
@@ -194,16 +206,29 @@ pub fn home_topic_from_post_summary(summary: PostSummary) -> HomeTopic {
         last_reply: HomeLastReply {
             avatar_label: author_name.chars().next().unwrap_or('P').to_string(),
             author: author_name,
-            time_label: if summary.published_at.is_some() {
-                "已发布".to_string()
-            } else {
-                "草稿".to_string()
-            },
+            time_label: reply_time
+                .map(relative_time_label)
+                .unwrap_or_else(|| "草稿".to_string()),
         },
         hot_score: summary.view_count
             + summary.comment_count * 20
             + summary.like_count * 10
             + summary.favorite_count * 5,
+    }
+}
+
+fn relative_time_label(time: OffsetDateTime) -> String {
+    let elapsed = OffsetDateTime::now_utc() - time;
+    if elapsed.whole_minutes() < 1 {
+        "刚刚".to_string()
+    } else if elapsed.whole_hours() < 1 {
+        format!("{} 分钟前", elapsed.whole_minutes())
+    } else if elapsed.whole_days() < 1 {
+        format!("{} 小时前", elapsed.whole_hours())
+    } else if elapsed.whole_days() < 30 {
+        format!("{} 天前", elapsed.whole_days())
+    } else {
+        time.date().to_string()
     }
 }
 

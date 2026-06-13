@@ -20,9 +20,15 @@ pub fn PostDetailPage() -> impl IntoView {
     let suspense_params = params;
     let fallback_query = query;
     let suspense_query = query;
+    let data_query = query;
     let data = Resource::new(
-        move || post_id_from_params(&params.read()),
-        load_post_detail_page,
+        move || {
+            (
+                post_id_from_params(&params.read()),
+                data_query.read().get("session_id").unwrap_or_default(),
+            )
+        },
+        move |(post_id, session_id)| load_post_detail_page(post_id, session_id),
     );
 
     view! {

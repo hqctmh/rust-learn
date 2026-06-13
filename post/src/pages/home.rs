@@ -16,8 +16,14 @@ pub fn HomePage() -> impl IntoView {
     let fallback_query_map = query_map;
     let suspense_query_map = query_map;
     let home = Resource::new(
-        move || home_query_from_params(&query_map.read()),
-        load_home_page,
+        move || {
+            let params = query_map.read();
+            (
+                home_query_from_params(&params),
+                params.get("session_id").unwrap_or_default(),
+            )
+        },
+        move |(query, session_id)| load_home_page(query, session_id),
     );
 
     view! {

@@ -62,6 +62,12 @@ impl From<UserPostSummaryRow> for PostSummary {
             like_count: row.like_count,
             favorite_count: row.favorite_count,
             published_at: row.published_at,
+            last_reply_author_name: None,
+            last_reply_author_avatar_url: None,
+            last_reply_at: None,
+            pinned: false,
+            locked: false,
+            read_by_me: false,
         }
     }
 }
