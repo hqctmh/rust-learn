@@ -1,11 +1,11 @@
 # Leptos 技术论坛
 
-这是基于 `prd.md` 的独立 Leptos 全栈论坛项目。第一阶段目标是交付可运行主干：注册登录、帖子流、Markdown 发帖、详情、评论、点赞、收藏、关注、通知入口、管理端 RBAC 骨架和本地依赖环境。
+这是基于 `prd.md` 的独立 Leptos 全栈论坛项目。当前主干已经覆盖首页聚合、注册登录、帖子流、Markdown 发帖、详情、评论、点赞、收藏、关注、通知与 WebSocket 实时推送、管理端 RBAC、审计日志、统计面板、文件上传、搜索和本地依赖环境。
 
 ## 技术栈
 
 - Leptos SSR + Axum
-- SQLx + PostgreSQL
+- SQLx + PostgreSQL，运行时仓储使用 SQLx checked macros
 - DaisyUI + Tailwind CSS
 - Redis、NATS、RustFS、Elasticsearch
 
@@ -48,9 +48,10 @@ SEARCH_BACKEND=postgres
 ELASTICSEARCH_SEARCH_INDEX=posts
 HOME_SIDEBAR_CACHE_ENABLED=false
 HOME_SIDEBAR_CACHE_TTL_SECONDS=60
+RUST_LOG=post=info,tower_http=info,axum=info
 ```
 
-通知 WebSocket：
+通知 WebSocket 实时推送：
 
 - 服务端路由：`/ws/notifications/{user_id}`
 - 服务端推送 JSON：`{"type":"notification","push_id":"...","notification_id":"...","title":"...","body":"..."}`
@@ -69,6 +70,8 @@ cargo leptos serve
 ```bash
 cargo check
 cargo test
+cargo leptos build
+env CARGO_INCREMENTAL=0 cargo test --manifest-path post/Cargo.toml
 ```
 
 启动后访问：
@@ -79,17 +82,25 @@ cargo test
 
 ## API
 
-当前阶段提供内存仓储版本的 JSON API，用于跑通论坛主链路；PostgreSQL schema 已准备好，后续可以把 `ForumStore` 替换为 SQLx 仓储。
+当前 JSON API 会通过 `AppState` 优先使用 PostgreSQL 运行时仓储；没有数据库连接时保留 demo store fallback，便于本地界面和合同测试快速启动。
 
+- `GET /api/home`：首页聚合数据，包含帖子表格流、分类统计、热门标签、公告、活跃作者、登录态和分页信息。
+- `GET /api/search`：帖子、标签和用户搜索；默认 PostgreSQL 后端，可切换 Elasticsearch。
 - `POST /api/login`：登录或创建演示 session。
+- `POST /api/register`：注册账号并创建 session。
+- `POST /api/logout`：退出登录。
 - `GET /api/posts`：帖子列表。
 - `POST /api/posts`：发布帖子，服务端会转义 Markdown 渲染结果中的 HTML。
 - `GET /api/posts/{post_id}`：帖子详情，并增加浏览计数。
-- `GET /api/posts/{post_id}/comments`：评论列表。
+- `GET /api/posts/{post_id}/comments?page=1&page_size=20`：分页评论列表。
 - `POST /api/posts/{post_id}/comments`：发表评论或回复。
 - `POST /api/posts/{post_id}/like`：点赞或取消点赞。
 - `POST /api/posts/{post_id}/favorite`：收藏或取消收藏。
 - `POST /api/users/{user_id}/follow`：关注或取消关注。
+- `POST /api/files/binary`：图片二进制上传，写入 RustFS 并保存文件元信息。
+- `GET /api/notifications`：通知中心数据。
+- `GET /ws/notifications/{user_id}`：WebSocket 实时通知连接。
+- `GET /api/admin/dashboard`：管理端首页数据，包含 RBAC 菜单、统计、审计、治理队列。
 
 示例：
 
@@ -103,7 +114,7 @@ curl -sS -X POST http://127.0.0.1:3000/api/posts \
 
 ## 迁移
 
-第一阶段 migration 位于 `migrations/202606100001_phase1.sql`。本地数据库启动后可使用 SQLx CLI 执行迁移：
+数据库 migration 位于 `migrations/`，包含核心业务表和 `integration_outbox`。本地数据库启动后可使用 SQLx CLI 执行迁移：
 
 ```bash
 sqlx migrate run
@@ -111,4 +122,6 @@ sqlx migrate run
 
 ## 当前阶段边界
 
-第一阶段先保证论坛页面、核心领域模型、JSON API 和本地依赖环境可运行。Redis、NATS、RustFS、Elasticsearch 已进入 Docker Compose；PostgreSQL 仓储、RustFS 对象写入、集成 outbox 和 Elasticsearch 搜索仓储边界已接入。默认搜索后端仍是 PostgreSQL，本地或集成环境可通过 `SEARCH_BACKEND=elasticsearch` 和 `ELASTICSEARCH_SEARCH_INDEX=posts` 切换到 Elasticsearch。
+当前实现已经具备 PostgreSQL 运行时仓储、Redis 首页侧栏缓存边界、RustFS 对象上传、NATS/Redis/Elasticsearch `integration_outbox`、WebSocket 通知推送和 HTTP tracing。默认搜索后端仍是 PostgreSQL，本地或集成环境可通过 `SEARCH_BACKEND=elasticsearch` 和 `ELASTICSEARCH_SEARCH_INDEX=posts` 切换到 Elasticsearch。
+
+外部服务 live e2e 测试默认 `ignored`，需要 PostgreSQL、Redis、NATS、RustFS 和 Elasticsearch 都可访问后手动运行。

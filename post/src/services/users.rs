@@ -1,6 +1,7 @@
 use crate::{
     domain::users::{ChangePasswordRequest, UpdateAvatarRequest, UpdateProfileRequest},
     error::ForumError,
+    services::auth::AuthService,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,9 +63,7 @@ impl UserSettingsService {
                 "新密码不能少于 6 个字符".to_string(),
             ));
         }
-        if stored_password != old_password {
-            return Err(ForumError::Unauthorized);
-        }
+        AuthService::validate_password_match(stored_password, old_password)?;
 
         Ok(new_password.to_string())
     }

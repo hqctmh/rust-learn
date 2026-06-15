@@ -51,6 +51,7 @@ pub struct AdminPostRow {
     pub author: String,
     pub category: String,
     pub status: String,
+    pub recommended: bool,
     pub locked: bool,
     pub actions: Vec<String>,
 }
@@ -208,6 +209,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 author: "Skyline".to_string(),
                 category: "经验分享".to_string(),
                 status: "已发布".to_string(),
+                recommended: false,
                 locked: false,
                 actions: vec![
                     "下架".to_string(),
@@ -223,6 +225,7 @@ pub fn admin_dashboard_demo() -> AdminDashboard {
                 author: "hello-rust".to_string(),
                 category: "教程".to_string(),
                 status: "已下架".to_string(),
+                recommended: false,
                 locked: false,
                 actions: vec!["恢复".to_string(), "查看".to_string(), "删除".to_string()],
             },

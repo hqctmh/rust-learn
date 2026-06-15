@@ -17,7 +17,7 @@ use crate::{
         admin::AdminDashboard,
         announcements::{AnnouncementItem, AnnouncementReadState, CreateAnnouncementRequest},
         auth::{LoginRequest, RegisterRequest, Session},
-        comments::{CommentNode, CreateCommentRequest},
+        comments::{CommentNode, CommentPage, CommentPageQuery, CreateCommentRequest},
         files::{FileAsset, FileBinaryUploadRequest, FileUploadRequest},
         home::{HomePageData, HomeQuery, HomeSort, HomeTab, HomeTimeRange},
         moderation::{
@@ -857,6 +857,21 @@ struct AuthorQueryParams {
     session_id: Option<Uuid>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+struct CommentPageQueryParams {
+    page: Option<usize>,
+    page_size: Option<usize>,
+}
+
+impl From<CommentPageQueryParams> for CommentPageQuery {
+    fn from(value: CommentPageQueryParams) -> Self {
+        Self {
+            page: value.page.unwrap_or(1),
+            page_size: value.page_size.unwrap_or(20),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct ActorIdentity {
     user_id: Option<Uuid>,
@@ -960,8 +975,11 @@ async fn get_post(
 async fn list_comments(
     Path(post_id): Path<Uuid>,
     Extension(state): Extension<AppState>,
-) -> Result<Json<Vec<CommentNode>>, ApiError> {
-    Ok(Json(state.comments_for_post(post_id).await?))
+    Query(params): Query<CommentPageQueryParams>,
+) -> Result<Json<CommentPage>, ApiError> {
+    Ok(Json(
+        state.comments_page_for_post(post_id, params.into()).await?,
+    ))
 }
 
 async fn create_comment(

@@ -10,6 +10,138 @@ fn app_shell_contract_lists_primary_routes() {
 }
 
 #[test]
+fn server_entrypoint_configures_http_observability_layer() {
+    let main_source = std::fs::read_to_string("src/main.rs").expect("read main source");
+    let cargo = std::fs::read_to_string("Cargo.toml").expect("read cargo manifest");
+
+    for required in [
+        "tracing_subscriber::fmt()",
+        "EnvFilter::try_from_default_env()",
+        "TraceLayer::new_for_http()",
+        "DefaultMakeSpan::new()",
+        "include_headers(true)",
+        "DefaultOnRequest::new()",
+        "DefaultOnResponse::new()",
+        "LatencyUnit::Micros",
+        "DefaultOnFailure::new()",
+        ".layer(http_trace_layer())",
+    ] {
+        assert!(
+            main_source.contains(required),
+            "SSR entrypoint should configure HTTP observability fragment: {required}"
+        );
+    }
+
+    for required in [
+        "tower-http = { version = \"0.6.11\", features = [\"trace\"], optional = true }",
+        "tracing = { version = \"0.1\", optional = true }",
+        "tracing-subscriber = { version = \"0.3\", features = [\"env-filter\"], optional = true }",
+        "\"dep:tower-http\"",
+        "\"dep:tracing\"",
+        "\"dep:tracing-subscriber\"",
+    ] {
+        assert!(
+            cargo.contains(required),
+            "Cargo manifest should enable observability dependency fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn readme_documents_current_runtime_and_verification_workflow() {
+    let readme = std::fs::read_to_string("README.md").expect("read post README");
+
+    for forbidden in [
+        "当前阶段提供内存仓储版本",
+        "后续可以把 `ForumStore` 替换为 SQLx 仓储",
+    ] {
+        assert!(
+            !readme.contains(forbidden),
+            "README should not describe obsolete runtime state: {forbidden}"
+        );
+    }
+
+    for required in [
+        "PostgreSQL 运行时仓储",
+        "SQLx checked macros",
+        "cargo leptos build",
+        "env CARGO_INCREMENTAL=0 cargo test --manifest-path post/Cargo.toml",
+        "RUST_LOG=post=info,tower_http=info,axum=info",
+        "GET /api/home",
+        "GET /api/search",
+        "GET /api/posts/{post_id}/comments?page=1&page_size=20",
+        "WebSocket 实时推送",
+        "integration_outbox",
+        "RustFS",
+        "Elasticsearch",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README should document current runtime/verification fragment: {required}"
+        );
+    }
+}
+
+#[test]
+fn postgres_runtime_can_seed_dense_workbench_home_for_local_demo() {
+    let main_source = std::fs::read_to_string("src/main.rs").expect("read main source");
+    let repository_mod =
+        std::fs::read_to_string("src/repositories/mod.rs").expect("read repositories mod");
+    let seed_source =
+        std::fs::read_to_string("src/repositories/demo_seed.rs").expect("read demo seed source");
+    let env_example = std::fs::read_to_string(".env.example").expect("read env example");
+
+    for required in [
+        "POST_DEMO_SEED_HOME",
+        "demo_seed_enabled()",
+        "PostgresDemoSeedRepository::ensure_homepage_seed(pool).await",
+    ] {
+        assert!(
+            main_source.contains(required),
+            "SSR entrypoint should wire local demo seed fragment: {required}"
+        );
+    }
+
+    assert!(repository_mod.contains("pub mod demo_seed;"));
+
+    for required in [
+        "pub struct PostgresDemoSeedRepository",
+        "pub async fn ensure_homepage_seed",
+        "dense_workbench_topics()",
+        "sqlx::query!(",
+        "insert into users",
+        "insert into categories",
+        "insert into tags",
+        "insert into posts",
+        "insert into post_contents",
+        "insert into post_tags",
+        "on conflict (post_id) do update",
+        "is_recommended",
+        "Leptos 0.6 发布：更快的编译、更小的体积、Signal 优化",
+    ] {
+        assert!(
+            seed_source.contains(required),
+            "demo seed should persist homepage design data with SQLx macros: {required}"
+        );
+    }
+
+    let state_source = std::fs::read_to_string("src/state.rs").expect("read state source");
+    for required in [
+        "postgres_demo_home_total(&home.query)",
+        "HomePagination",
+        "then_some(342)",
+        "显示 {shown_start}-{shown_end} / {total} 个主题",
+    ] {
+        assert!(
+            state_source.contains(required),
+            "demo runtime should preserve design pagination total for local homepage: {required}"
+        );
+    }
+
+    assert!(env_example.contains("POST_DEMO_SEED_HOME=true"));
+}
+
+#[test]
 fn homepage_component_loads_data_through_server_state() {
     let home_page = std::fs::read_to_string("src/pages/home.rs").expect("read home page source");
     let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
@@ -179,7 +311,38 @@ fn post_detail_page_loads_route_post_and_comments_through_server_state() {
             && page_data.contains("session_id: String")
     );
     assert!(page_data.contains(".post_detail_for_user("));
-    assert!(page_data.contains(".comments_for_post("));
+    assert!(page_data.contains("pub comments_page: CommentPage"));
+    assert!(page_data.contains(".comments_page_for_post("));
+}
+
+#[test]
+fn post_detail_page_renders_related_posts_from_page_data() {
+    let source =
+        std::fs::read_to_string("src/pages/post_detail.rs").expect("read post detail page source");
+    let page_data = std::fs::read_to_string("src/page_data.rs").expect("read page data source");
+
+    assert!(
+        page_data.contains("pub related_posts: Vec<PostSummary>"),
+        "post detail data should carry related posts"
+    );
+    assert!(
+        page_data.contains(".related_posts_for_post("),
+        "post detail loader should fetch related posts from AppState"
+    );
+    assert!(
+        source.contains("data.related_posts"),
+        "post detail page should render related posts from loaded data"
+    );
+    for hardcoded in [
+        "server function 中使用 SQLx 事务",
+        "Markdown 渲染与代码高亮",
+        "Axum 中间件处理 request body",
+    ] {
+        assert!(
+            !source.contains(hardcoded),
+            "post detail related posts must not hardcode: {hardcoded}"
+        );
+    }
 }
 
 #[test]
@@ -278,6 +441,25 @@ fn auth_service_normalizes_credentials_and_builds_sessions() {
     assert!(
         post::services::auth::AuthService::validate_password_match("other", &login.password)
             .is_err()
+    );
+    let password_hash = post::services::auth::AuthService::hash_password(&login.password);
+    assert_ne!(password_hash, login.password);
+    assert!(password_hash.starts_with("$argon2id$"));
+    post::services::auth::AuthService::validate_password_match(&password_hash, &login.password)
+        .expect("hashed password matches");
+    assert!(
+        post::services::auth::AuthService::validate_password_match(&password_hash, "wrong")
+            .is_err()
+    );
+    let legacy_sha256_hash =
+        "sha256$v1$dabbe3522635672913cd62fc6c750d1f1c35e649e73f9b62da0fc61e84fc7887";
+    post::services::auth::AuthService::validate_password_match(legacy_sha256_hash, &login.password)
+        .expect("legacy sha256 password hash matches");
+
+    let state_source = std::fs::read_to_string("src/state.rs").expect("read state source");
+    assert!(
+        state_source.matches("AuthService::hash_password").count() >= 5,
+        "register, demo login, demo register, and password-change paths should hash passwords before storage"
     );
 
     let now = time::OffsetDateTime::now_utc();
@@ -1087,6 +1269,30 @@ fn protected_api_handlers_resolve_actor_from_session_id() {
 }
 
 #[test]
+fn comments_api_returns_paginated_comment_page() {
+    let api = include_str!("../src/api.rs");
+
+    for required in [
+        "CommentPage",
+        "CommentPageQuery",
+        "struct CommentPageQueryParams",
+        "impl From<CommentPageQueryParams> for CommentPageQuery",
+        "Query(params): Query<CommentPageQueryParams>",
+        "Result<Json<CommentPage>, ApiError>",
+        ".comments_page_for_post(post_id, params.into()).await?",
+    ] {
+        assert!(
+            api.contains(required),
+            "comments API should expose paginated comment pages, missing fragment: {required}"
+        );
+    }
+    assert!(
+        !api.contains("Result<Json<Vec<CommentNode>>, ApiError>"),
+        "comments API must not return the full unpaginated comment list"
+    );
+}
+
+#[test]
 fn phase1_schema_contains_prd_core_tables() {
     let schema = include_str!("../migrations/202606100001_phase1.sql");
 
@@ -1300,6 +1506,10 @@ fn sqlx_post_detail_repository_contract_maps_post_detail_row() {
 #[test]
 fn sqlx_comment_repository_contract_maps_comment_tree_rows() {
     let sql = post::repositories::comments::PostgresCommentRepository::comments_for_post_sql();
+    let paged_sql =
+        post::repositories::comments::PostgresCommentRepository::comments_for_post_page_sql();
+    let count_sql =
+        post::repositories::comments::PostgresCommentRepository::count_root_comments_sql();
     assert!(!sql.to_ascii_lowercase().contains("select *"));
     for required in [
         "from comments c",
@@ -1311,6 +1521,30 @@ fn sqlx_comment_repository_contract_maps_comment_tree_rows() {
         assert!(
             sql.to_ascii_lowercase().contains(required),
             "missing comment SQL fragment: {required}"
+        );
+    }
+    assert!(!paged_sql.to_ascii_lowercase().contains("select *"));
+    for required in [
+        "root_comments as",
+        "limit $2",
+        "offset $3",
+        "c.parent_comment_id in (select comment_id from root_comments)",
+        "order by c.created_at asc",
+    ] {
+        assert!(
+            paged_sql.to_ascii_lowercase().contains(required),
+            "missing paged comment SQL fragment: {required}"
+        );
+    }
+    for required in [
+        "count(*)::bigint as \"count!\"",
+        "from comments",
+        "where post_id = $1",
+        "parent_comment_id is null",
+    ] {
+        assert!(
+            count_sql.to_ascii_lowercase().contains(required),
+            "missing comment count SQL fragment: {required}"
         );
     }
 
@@ -1926,6 +2160,115 @@ async fn app_state_add_comment_persists_to_postgres_and_updates_post_count() {
 }
 
 #[tokio::test]
+async fn app_state_comments_page_paginates_postgres_root_comments() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("comment-page-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("分页楼主{suffix}"),
+        })
+        .await
+        .expect("register post author");
+    let commenter = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("comment-page-user-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("分页评论者{suffix}"),
+        })
+        .await
+        .expect("register commenter");
+    let detail = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("评论分页帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "评论列表需要分页".to_string(),
+                category_name: Some("问题".to_string()),
+                tag_names: vec!["comment-page".to_string()],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create post");
+
+    let first = state
+        .add_comment(
+            commenter.user.user_id,
+            post::domain::comments::CreateCommentRequest {
+                post_id: detail.summary.post_id,
+                parent_comment_id: None,
+                content: format!("第一页评论 {suffix}"),
+            },
+        )
+        .await
+        .expect("add first comment");
+    let second = state
+        .add_comment(
+            commenter.user.user_id,
+            post::domain::comments::CreateCommentRequest {
+                post_id: detail.summary.post_id,
+                parent_comment_id: None,
+                content: format!("第二页评论 {suffix}"),
+            },
+        )
+        .await
+        .expect("add second comment");
+    let third = state
+        .add_comment(
+            commenter.user.user_id,
+            post::domain::comments::CreateCommentRequest {
+                post_id: detail.summary.post_id,
+                parent_comment_id: None,
+                content: format!("第三页评论 {suffix}"),
+            },
+        )
+        .await
+        .expect("add third comment");
+    state
+        .add_comment(
+            author.user.user_id,
+            post::domain::comments::CreateCommentRequest {
+                post_id: detail.summary.post_id,
+                parent_comment_id: Some(second.comment_id),
+                content: format!("第二页回复 {suffix}"),
+            },
+        )
+        .await
+        .expect("add reply to second comment");
+
+    let page = state
+        .comments_page_for_post(
+            detail.summary.post_id,
+            post::domain::comments::CommentPageQuery {
+                page: 2,
+                page_size: 1,
+            },
+        )
+        .await
+        .expect("load comment page");
+
+    assert_eq!(page.page, 2);
+    assert_eq!(page.page_size, 1);
+    assert_eq!(page.total, 3);
+    assert_eq!(page.total_pages, 3);
+    assert_eq!(page.comments.len(), 1);
+    assert_eq!(page.comments[0].comment_id, second.comment_id);
+    assert_eq!(page.comments[0].replies.len(), 1);
+    assert_ne!(page.comments[0].comment_id, first.comment_id);
+    assert_ne!(page.comments[0].comment_id, third.comment_id);
+}
+
+#[tokio::test]
 async fn app_state_post_read_records_drive_homepage_read_markers() {
     let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
         .await
@@ -2063,6 +2406,96 @@ async fn app_state_post_detail_increments_postgres_view_count_for_homepage() {
         .find(|topic| topic.id == detail.summary.post_id.to_string())
         .expect("home topic");
     assert_eq!(topic.view_count_label, "1");
+}
+
+#[tokio::test]
+async fn app_state_post_detail_related_posts_use_shared_tags() {
+    let pool = sqlx::PgPool::connect("postgres://post:post@localhost:5433/post")
+        .await
+        .expect("connect postgres");
+    let state = post::state::AppState {
+        db: Some(pool),
+        forum: post::state::ForumStore::seeded(),
+    };
+
+    let suffix = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+    let author = state
+        .register(post::domain::auth::RegisterRequest {
+            username: format!("related-author-{suffix}"),
+            password: "password".to_string(),
+            nickname: format!("相关推荐作者{suffix}"),
+        })
+        .await
+        .expect("register author");
+    let category = format!("相关推荐分类-{suffix}");
+    let tag = format!("related-tag-{suffix}");
+    let source = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("源帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "源帖子".to_string(),
+                category_name: Some(category.clone()),
+                tag_names: vec![tag.clone()],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create source post");
+    let related = state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("相关帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "相关帖子应该被推荐".to_string(),
+                category_name: Some(category),
+                tag_names: vec![tag],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create related post");
+    state
+        .create_post(
+            author.user.user_id,
+            post::domain::posts::CreatePostRequest {
+                title: format!("无关帖子 {suffix}"),
+                markdown: "正文".to_string(),
+                summary: "无关帖子不应该出现在推荐中".to_string(),
+                category_name: Some(format!("unrelated-category-{suffix}")),
+                tag_names: vec![format!("unrelated-tag-{suffix}")],
+                publish: true,
+            },
+        )
+        .await
+        .expect("create unrelated post");
+
+    let related_posts = state
+        .related_posts_for_post(source.summary.post_id, 5)
+        .await
+        .expect("load related posts");
+
+    assert!(
+        related_posts
+            .iter()
+            .any(|post| post.post_id == related.summary.post_id),
+        "same-tag post should be recommended"
+    );
+    assert!(
+        related_posts
+            .iter()
+            .all(|post| post.post_id != source.summary.post_id),
+        "source post should not recommend itself"
+    );
+    assert!(
+        related_posts.iter().all(|post| post
+            .tags
+            .iter()
+            .any(|post_tag| post_tag == &format!("related-tag-{suffix}"))),
+        "related posts should share the source tag"
+    );
 }
 
 #[tokio::test]
@@ -2804,6 +3237,18 @@ async fn app_state_admin_report_list_and_handle_persist_to_postgres() {
         post::domain::reports::ReportStatus::Handled
     );
     assert_eq!(persisted.handle_note.as_deref(), Some("已下线违规内容"));
+    let audit_logs = state
+        .audit_logs(admin.user_id)
+        .await
+        .expect("report audit logs");
+    assert!(
+        audit_logs.iter().any(|entry| {
+            entry.action == "report.handle"
+                && entry.target_type == "report"
+                && entry.target_id == report.report_id
+        }),
+        "report handling should write audit log"
+    );
 }
 
 #[tokio::test]
@@ -2908,6 +3353,24 @@ async fn app_state_announcement_admin_and_public_flows_persist_to_postgres() {
             .iter()
             .all(|item| item.announcement_id != draft.announcement_id)
     );
+    let audit_logs = state
+        .audit_logs(admin.user_id)
+        .await
+        .expect("announcement audit logs");
+    for action in [
+        "announcement.create",
+        "announcement.publish",
+        "announcement.withdraw",
+    ] {
+        assert!(
+            audit_logs.iter().any(|entry| {
+                entry.action == action
+                    && entry.target_type == "announcement"
+                    && entry.target_id == draft.announcement_id
+            }),
+            "announcement admin flow should write audit log action={action}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -3098,6 +3561,33 @@ async fn app_state_taxonomy_admin_and_public_flows_persist_to_postgres() {
             .iter()
             .all(|item| item.tag_id != target_tag.tag_id)
     );
+    let audit_logs = state
+        .audit_logs(admin.user_id)
+        .await
+        .expect("taxonomy audit logs");
+    for action in ["category.create", "category.update", "category.disable"] {
+        assert!(
+            audit_logs.iter().any(|entry| {
+                entry.action == action
+                    && entry.target_type == "category"
+                    && entry.target_id == category.category_id
+            }),
+            "category admin flow should write audit log action={action}"
+        );
+    }
+    for (action, target_id) in [
+        ("tag.create", source_tag.tag_id),
+        ("tag.update", source_tag.tag_id),
+        ("tag.merge", target_tag.tag_id),
+        ("tag.delete", target_tag.tag_id),
+    ] {
+        assert!(
+            audit_logs.iter().any(|entry| {
+                entry.action == action && entry.target_type == "tag" && entry.target_id == target_id
+            }),
+            "tag admin flow should write audit log action={action}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -3210,6 +3700,24 @@ async fn app_state_content_moderation_persists_to_postgres() {
         .await
         .expect("unpin post");
     assert!(!unpinned.pinned);
+    let recommended = state
+        .recommend_post(admin.user_id, post.summary.post_id)
+        .await
+        .expect("recommend post");
+    assert!(recommended.recommended);
+    assert!(
+        state
+            .admin_posts(admin.user_id)
+            .await
+            .expect("admin posts after recommendation")
+            .iter()
+            .any(|item| item.post_id == post.summary.post_id && item.recommended)
+    );
+    let unrecommended = state
+        .unrecommend_post(admin.user_id, post.summary.post_id)
+        .await
+        .expect("unrecommend post");
+    assert!(!unrecommended.recommended);
 
     let admin_comments = state
         .admin_comments(admin.user_id)
@@ -3272,6 +3780,39 @@ async fn app_state_content_moderation_persists_to_postgres() {
             .iter()
             .all(|item| item.post_id != post.summary.post_id)
     );
+    let audit_logs = state
+        .audit_logs(admin.user_id)
+        .await
+        .expect("content moderation audit logs");
+    let required_post_actions = [
+        "post.take_down",
+        "post.restore",
+        "post.pin",
+        "post.unpin",
+        "post.recommend",
+        "post.unrecommend",
+        "post.delete",
+    ];
+    for action in required_post_actions {
+        assert!(
+            audit_logs.iter().any(|entry| {
+                entry.action == action
+                    && entry.target_type == "post"
+                    && entry.target_id == post.summary.post_id
+            }),
+            "content moderation should write audit log action={action}"
+        );
+    }
+    for action in ["comment.delete", "comment.recover"] {
+        assert!(
+            audit_logs.iter().any(|entry| {
+                entry.action == action
+                    && entry.target_type == "comment"
+                    && entry.target_id == comment.comment_id
+            }),
+            "comment moderation should write audit log action={action}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -4106,6 +4647,25 @@ async fn app_state_admin_dashboard_aggregates_postgres_runtime_data() {
         )
         .await
         .expect("create dashboard comment");
+    state
+        .toggle_post_like(admin.user_id, post.summary.post_id)
+        .await
+        .expect("like dashboard post");
+    sqlx::query!(
+        r#"
+update posts
+set view_count = 9000000000, like_count = 9000000000, favorite_count = 9000000000
+where post_id = $1
+"#,
+        post.summary.post_id
+    )
+    .execute(&pool)
+    .await
+    .expect("boost dashboard hot post");
+    state
+        .connect_notification_socket(admin.user_id)
+        .await
+        .expect("connect dashboard admin socket");
 
     assert!(state.admin_dashboard(member.user_id).await.is_err());
     let dashboard = state
@@ -4113,8 +4673,54 @@ async fn app_state_admin_dashboard_aggregates_postgres_runtime_data() {
         .await
         .expect("postgres admin dashboard");
 
-    assert!(dashboard.stats.iter().any(|stat| stat.label == "用户总数"));
-    assert!(dashboard.stats.iter().any(|stat| stat.label == "帖子总数"));
+    for required_stat in [
+        "用户总数",
+        "今日新增用户",
+        "帖子总数",
+        "今日新增帖子",
+        "评论总数",
+        "今日新增评论",
+        "点赞总数",
+        "当前在线用户数",
+        "热门帖子",
+        "热门标签",
+    ] {
+        assert!(
+            dashboard
+                .stats
+                .iter()
+                .any(|stat| stat.label == required_stat),
+            "admin dashboard should expose PRD 5.10 stat: {required_stat}"
+        );
+    }
+    assert!(
+        dashboard
+            .stats
+            .iter()
+            .any(|stat| stat.label == "当前在线用户数" && stat.value == "1"),
+        "admin dashboard should count active WebSocket connections"
+    );
+    assert!(
+        dashboard
+            .stats
+            .iter()
+            .any(|stat| stat.label == "点赞总数" && stat.value != "0"),
+        "admin dashboard should aggregate post/comment likes"
+    );
+    assert!(
+        dashboard
+            .stats
+            .iter()
+            .any(|stat| stat.label == "热门帖子" && stat.value != "暂无"),
+        "admin dashboard should surface a current hot post"
+    );
+    assert!(
+        dashboard
+            .stats
+            .iter()
+            .any(|stat| stat.label == "热门标签" && stat.value != "暂无"),
+        "admin dashboard should surface a current hot tag"
+    );
     assert!(
         dashboard
             .users
@@ -4137,6 +4743,32 @@ async fn app_state_admin_dashboard_aggregates_postgres_runtime_data() {
             .permissions
             .iter()
             .any(|permission| permission.code == "audit:view")
+    );
+}
+
+#[test]
+fn admin_dashboard_stats_are_loaded_from_dedicated_repository() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repositories_mod = std::fs::read_to_string(manifest_dir.join("src/repositories/mod.rs"))
+        .expect("read repositories mod source");
+    let state =
+        std::fs::read_to_string(manifest_dir.join("src/state.rs")).expect("read state source");
+
+    assert!(
+        repositories_mod.contains("pub mod admin_stats;"),
+        "admin dashboard stats should live behind a repository module"
+    );
+    assert!(
+        state.contains("PostgresAdminStatsRepository::load_summary("),
+        "AppState admin dashboard should load aggregate stats from the repository"
+    );
+    assert!(
+        state.contains("PostgresAdminStatsRepository::top_hot_post("),
+        "AppState admin dashboard should load hot post stats from the repository"
+    );
+    assert!(
+        state.contains("PostgresAdminStatsRepository::top_hot_tag("),
+        "AppState admin dashboard should load hot tag stats from the repository"
     );
 }
 
@@ -5667,6 +6299,49 @@ fn notifications_page_marks_read_with_session_actions() {
 }
 
 #[test]
+fn notifications_page_connects_browser_websocket_for_realtime_pushes() {
+    let page = std::fs::read_to_string("src/pages/notifications.rs")
+        .expect("read notifications page source");
+    let cargo = std::fs::read_to_string("Cargo.toml").expect("read cargo manifest");
+
+    for required in [
+        "NotificationRealtimeClient",
+        "Effect::new(",
+        "web_sys::WebSocket::new",
+        "set_onmessage",
+        "web_sys::MessageEvent",
+        "NotificationPush",
+        "serde_json::from_str::<NotificationPush>",
+        "set_onerror",
+        "Owner::on_cleanup",
+        ".close()",
+        "ws://",
+        "wss://",
+        "/ws/notifications/",
+        "实时推送已连接",
+        "实时推送等待登录",
+        "实时推送连接失败",
+    ] {
+        assert!(
+            page.contains(required),
+            "notification page realtime WebSocket client missing fragment: {required}"
+        );
+    }
+
+    for required_feature in [
+        "\"Window\"",
+        "\"Location\"",
+        "\"WebSocket\"",
+        "\"MessageEvent\"",
+    ] {
+        assert!(
+            cargo.contains(required_feature),
+            "hydrate web-sys features should include realtime notification dependency: {required_feature}"
+        );
+    }
+}
+
+#[test]
 fn notification_push_contract_tracks_online_connections_and_pending_payloads() {
     let store = post::state::ForumStore::seeded();
     let author = store.demo_user();
@@ -6567,6 +7242,75 @@ fn admin_page_creates_announcements_with_session_action() {
 }
 
 #[test]
+fn admin_page_recommends_and_unrecommends_posts_with_session_actions() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let migrations = std::fs::read_dir(manifest_dir.join("migrations"))
+        .expect("read migrations")
+        .map(|entry| {
+            let entry = entry.expect("read migration entry");
+            std::fs::read_to_string(entry.path()).expect("read migration source")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let moderation_domain = std::fs::read_to_string(manifest_dir.join("src/domain/moderation.rs"))
+        .expect("read moderation domain source");
+    let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
+        .expect("read page data source");
+    let admin_page = std::fs::read_to_string(manifest_dir.join("src/pages/admin.rs"))
+        .expect("read admin page source");
+    let repository = std::fs::read_to_string(manifest_dir.join("src/repositories/moderation.rs"))
+        .expect("read moderation repository source");
+
+    for required in [
+        "is_recommended boolean not null default false",
+        "p.is_recommended",
+    ] {
+        assert!(
+            migrations.contains(required) || repository.contains(required),
+            "post recommendation schema/repository missing fragment: {required}"
+        );
+    }
+
+    for required in ["pub recommended: bool", "recommended: row.recommended"] {
+        assert!(
+            moderation_domain.contains(required) || repository.contains(required),
+            "post recommendation DTO missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "pub async fn recommend_admin_post(",
+        "pub async fn unrecommend_admin_post(",
+        ".recommend_post(",
+        ".unrecommend_post(",
+        ".admin_dashboard(session.user.user_id)",
+    ] {
+        assert!(
+            page_data.contains(required),
+            "admin post recommendation server action missing fragment: {required}"
+        );
+    }
+
+    for required in [
+        "RecommendAdminPost",
+        "UnrecommendAdminPost",
+        "ServerAction::<RecommendAdminPost>::new()",
+        "ServerAction::<UnrecommendAdminPost>::new()",
+        "ActionForm action=recommend_post_action",
+        "ActionForm action=unrecommend_post_action",
+        "recommend_post_pending",
+        "unrecommend_post_pending",
+        "推荐",
+        "取消推荐",
+    ] {
+        assert!(
+            admin_page.contains(required),
+            "admin post recommendation UI missing fragment: {required}"
+        );
+    }
+}
+
+#[test]
 fn admin_page_configures_announcement_effective_and_expiry_times() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let page_data = std::fs::read_to_string(manifest_dir.join("src/page_data.rs"))
@@ -7223,8 +7967,18 @@ fn rustfs_object_store_adapter_contract_uses_s3_put_object() {
         .expect("RustFS object store adapter should exist");
 
     for required in [
-        "aws_sdk_s3::{Client, primitives::ByteStream}",
-        "aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await",
+        "aws_sdk_s3::{",
+        "config::{Credentials, Region}",
+        "aws_config::defaults(aws_config::BehaviorVersion::latest())",
+        ".region(Region::new(",
+        ".endpoint_url(",
+        ".credentials_provider(Credentials::new(",
+        "\"AWS_REGION\"",
+        "\"AWS_ENDPOINT_URL\"",
+        "\"AWS_ACCESS_KEY_ID\"",
+        "\"AWS_SECRET_ACCESS_KEY\"",
+        ".load()",
+        ".await",
         "Client::new(&shared_config)",
         "async fn ensure_bucket",
         ".head_bucket()",
@@ -8371,26 +9125,33 @@ fn moderation_service_applies_post_and_comment_actions() {
         &mut detail,
         post::domain::posts::PostStatus::Offline,
         true,
+        true,
     );
     assert_eq!(offline.status, post::domain::posts::PostStatus::Offline);
     assert!(offline.pinned);
+    assert!(offline.recommended);
     assert_eq!(detail.status, post::domain::posts::PostStatus::Offline);
 
     let deleted = post::services::moderation::ModerationService::apply_post_status(
         &mut detail,
         post::domain::posts::PostStatus::Deleted,
         true,
+        true,
     );
     assert_eq!(deleted.status, post::domain::posts::PostStatus::Deleted);
     assert!(!deleted.pinned);
+    assert!(!deleted.recommended);
     assert!(
-        post::services::moderation::ModerationService::build_pin_action(&detail, true).is_err()
+        post::services::moderation::ModerationService::build_pin_action(&detail, true, false)
+            .is_err()
     );
 
     detail.status = post::domain::posts::PostStatus::Published;
-    let pinned = post::services::moderation::ModerationService::build_pin_action(&detail, true)
-        .expect("pin published post");
+    let pinned =
+        post::services::moderation::ModerationService::build_pin_action(&detail, true, true)
+            .expect("pin published post");
     assert!(pinned.pinned);
+    assert!(pinned.recommended);
 
     let comment_id = uuid::Uuid::from_u128(1203);
     let mut comment = post::domain::comments::CommentNode {
@@ -8433,9 +9194,10 @@ fn moderation_service_applies_post_and_comment_actions() {
     assert!(!recover_effect.action.deleted);
     assert_eq!(recover_effect.count_delta, 1);
 
-    let row = post::services::moderation::ModerationService::post_row(&detail, true);
+    let row = post::services::moderation::ModerationService::post_row(&detail, true, true);
     assert_eq!(row.post_id, post_id);
     assert!(row.pinned);
+    assert!(row.recommended);
 
     let rows = post::services::moderation::ModerationService::flatten_comment_rows(
         post_id,

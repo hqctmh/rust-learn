@@ -1,4 +1,8 @@
-use aws_sdk_s3::{Client, primitives::ByteStream};
+use aws_sdk_s3::{
+    Client,
+    config::{Credentials, Region},
+    primitives::ByteStream,
+};
 
 use crate::{domain::files::FileObjectUpload, state::RuntimeConfig};
 
@@ -22,7 +26,25 @@ pub struct RustfsObjectStore {
 
 impl RustfsObjectStore {
     pub async fn from_config(config: RustfsObjectStoreConfig) -> Result<Self, String> {
-        let shared_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+        let endpoint_url = std::env::var("AWS_ENDPOINT_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:9000".to_string());
+        let access_key_id =
+            std::env::var("AWS_ACCESS_KEY_ID").unwrap_or_else(|_| "rustfsadmin".to_string());
+        let secret_access_key =
+            std::env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_else(|_| "rustfsadmin".to_string());
+        let shared_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .region(Region::new(region))
+            .endpoint_url(endpoint_url)
+            .credentials_provider(Credentials::new(
+                access_key_id,
+                secret_access_key,
+                None,
+                None,
+                "post-rustfs",
+            ))
+            .load()
+            .await;
 
         Ok(Self {
             client: Client::new(&shared_config),

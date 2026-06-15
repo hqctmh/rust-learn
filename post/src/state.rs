@@ -14,7 +14,7 @@ use crate::{
             CreateAnnouncementRequest, UpdateAnnouncementRequest,
         },
         auth::{RegisterRequest, Session, SessionUser},
-        comments::{CommentNode, CreateCommentRequest},
+        comments::{CommentNode, CommentPage, CommentPageQuery, CreateCommentRequest},
         files::{FileAsset, FileBinaryUploadRequest, FileUploadRequest, build_file_asset},
         home::{
             HomeAnnouncement, HomeCategory, HomePageData, HomeQuery, HomeTag, dense_workbench_home,
@@ -75,6 +75,8 @@ use crate::object_store::{RustfsObjectStore, RustfsObjectStoreConfig};
 
 #[cfg(feature = "ssr")]
 use crate::repositories::{
+    admin_audit::PostgresAdminAuditRepository,
+    admin_stats::PostgresAdminStatsRepository,
     announcements::PostgresAnnouncementRepository,
     auth::PostgresAuthRepository,
     comments::PostgresCommentRepository,
@@ -151,7 +153,7 @@ impl AppState {
             pool,
             Uuid::new_v4(),
             &registration.username,
-            &registration.password,
+            &AuthService::hash_password(&registration.password),
             &registration.nickname,
             None,
             false,
@@ -264,12 +266,40 @@ impl AppState {
         Ok(detail)
     }
 
+    pub async fn related_posts_for_post(
+        &self,
+        post_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<PostSummary>, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.related_posts_for_post(post_id, limit as usize);
+        };
+
+        PostgresPostRepository::list_related_summaries(pool, post_id, limit, None)
+            .await
+            .map_err(|_| ForumError::Internal)
+    }
+
     pub async fn comments_for_post(&self, post_id: Uuid) -> Result<Vec<CommentNode>, ForumError> {
         let Some(pool) = &self.db else {
             return self.forum.comments_for_post(post_id);
         };
 
         PostgresCommentRepository::list_for_post(pool, post_id)
+            .await
+            .map_err(|_| ForumError::Internal)
+    }
+
+    pub async fn comments_page_for_post(
+        &self,
+        post_id: Uuid,
+        query: CommentPageQuery,
+    ) -> Result<CommentPage, ForumError> {
+        let Some(pool) = &self.db else {
+            return self.forum.comments_page_for_post(post_id, query);
+        };
+
+        PostgresCommentRepository::page_for_post(pool, post_id, query)
             .await
             .map_err(|_| ForumError::Internal)
     }
@@ -730,6 +760,16 @@ impl AppState {
         if rows_affected == 0 {
             return Err(ForumError::NotFound);
         }
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "report.handle",
+            "report",
+            report.report_id,
+            &report_audit_snapshot(&report),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
 
         Ok(report)
     }
@@ -755,6 +795,16 @@ impl AppState {
         PostgresAnnouncementRepository::insert_announcement(pool, &announcement)
             .await
             .map_err(|_| ForumError::Internal)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "announcement.create",
+            "announcement",
+            announcement.announcement_id,
+            &announcement_audit_snapshot(&announcement),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
 
         Ok(announcement)
     }
@@ -771,7 +821,7 @@ impl AppState {
                 .update_announcement(admin_id, announcement_id, request);
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         let mut announcement =
             PostgresAnnouncementRepository::find_announcement(pool, announcement_id)
                 .await
@@ -785,6 +835,16 @@ impl AppState {
         if rows_affected == 0 {
             return Err(ForumError::NotFound);
         }
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "announcement.update",
+            "announcement",
+            announcement.announcement_id,
+            &announcement_audit_snapshot(&announcement),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
 
         Ok(announcement)
     }
@@ -812,7 +872,7 @@ impl AppState {
             return self.forum.publish_announcement(admin_id, announcement_id);
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         let mut announcement =
             PostgresAnnouncementRepository::find_announcement(pool, announcement_id)
                 .await
@@ -830,6 +890,16 @@ impl AppState {
         PostgresIntegrationRepository::insert_actions(pool, &actions)
             .await
             .map_err(|_| ForumError::Internal)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "announcement.publish",
+            "announcement",
+            announcement.announcement_id,
+            &announcement_audit_snapshot(&announcement),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
 
         Ok(announcement)
     }
@@ -843,7 +913,7 @@ impl AppState {
             return self.forum.push_announcement(admin_id, announcement_id);
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         let announcement = PostgresAnnouncementRepository::find_announcement(pool, announcement_id)
             .await
             .map_err(|_| ForumError::Internal)?
@@ -871,6 +941,16 @@ impl AppState {
         PostgresIntegrationRepository::insert_actions(pool, &actions)
             .await
             .map_err(|_| ForumError::Internal)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "announcement.push",
+            "announcement",
+            announcement.announcement_id,
+            &announcement_audit_snapshot(&announcement),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
 
         Ok(announcement)
     }
@@ -884,7 +964,7 @@ impl AppState {
             return self.forum.withdraw_announcement(admin_id, announcement_id);
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         let mut announcement =
             PostgresAnnouncementRepository::find_announcement(pool, announcement_id)
                 .await
@@ -898,6 +978,16 @@ impl AppState {
         if rows_affected == 0 {
             return Err(ForumError::NotFound);
         }
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "announcement.withdraw",
+            "announcement",
+            announcement.announcement_id,
+            &announcement_audit_snapshot(&announcement),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
 
         Ok(announcement)
     }
@@ -984,7 +1074,7 @@ impl AppState {
             return self.forum.create_category(admin_id, request);
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         if PostgresTaxonomyRepository::enabled_category_name_exists(pool, &request.name, None)
             .await
             .map_err(|_| ForumError::Internal)?
@@ -992,9 +1082,20 @@ impl AppState {
             return Err(ForumError::Conflict("分类名称已存在".to_string()));
         }
         let category = TaxonomyService::build_category(Uuid::new_v4(), request)?;
-        PostgresTaxonomyRepository::insert_category(pool, &category)
+        let category = PostgresTaxonomyRepository::insert_category(pool, &category)
             .await
-            .map_err(map_taxonomy_db_error)
+            .map_err(map_taxonomy_db_error)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "category.create",
+            "category",
+            category.category_id,
+            &category_audit_snapshot(&category),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(category)
     }
 
     pub async fn update_category(
@@ -1007,7 +1108,12 @@ impl AppState {
             return self.forum.update_category(admin_id, category_id, request);
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
+        let audit_action = if request.enabled == Some(false) {
+            "category.disable"
+        } else {
+            "category.update"
+        };
         if let Some(name) = &request.name {
             if PostgresTaxonomyRepository::enabled_category_name_exists(
                 pool,
@@ -1025,10 +1131,21 @@ impl AppState {
             .map_err(|_| ForumError::Internal)?
             .ok_or(ForumError::NotFound)?;
         TaxonomyService::apply_category_update(&mut category, request)?;
-        PostgresTaxonomyRepository::update_category(pool, &category)
+        let category = PostgresTaxonomyRepository::update_category(pool, &category)
             .await
             .map_err(map_taxonomy_db_error)?
-            .ok_or(ForumError::NotFound)
+            .ok_or(ForumError::NotFound)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            audit_action,
+            "category",
+            category.category_id,
+            &category_audit_snapshot(&category),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(category)
     }
 
     pub async fn disable_category(
@@ -1069,7 +1186,7 @@ impl AppState {
             return self.forum.create_tag(admin_id, request);
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         if PostgresTaxonomyRepository::enabled_tag_name_exists(pool, &request.name, None)
             .await
             .map_err(|_| ForumError::Internal)?
@@ -1077,9 +1194,20 @@ impl AppState {
             return Err(ForumError::Conflict("标签名称已存在".to_string()));
         }
         let tag = TaxonomyService::build_tag(Uuid::new_v4(), request)?;
-        PostgresTaxonomyRepository::insert_tag(pool, &tag)
+        let tag = PostgresTaxonomyRepository::insert_tag(pool, &tag)
             .await
-            .map_err(map_taxonomy_db_error)
+            .map_err(map_taxonomy_db_error)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "tag.create",
+            "tag",
+            tag.tag_id,
+            &tag_audit_snapshot(&tag),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(tag)
     }
 
     pub async fn update_tag(
@@ -1092,7 +1220,12 @@ impl AppState {
             return self.forum.update_tag(admin_id, tag_id, request);
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
+        let audit_action = if request.enabled == Some(false) && request.use_count == Some(0) {
+            "tag.delete"
+        } else {
+            "tag.update"
+        };
         if let Some(name) = &request.name {
             if PostgresTaxonomyRepository::enabled_tag_name_exists(pool, name, Some(tag_id))
                 .await
@@ -1106,10 +1239,21 @@ impl AppState {
             .map_err(|_| ForumError::Internal)?
             .ok_or(ForumError::NotFound)?;
         TaxonomyService::apply_tag_update(&mut tag, request)?;
-        PostgresTaxonomyRepository::update_tag(pool, &tag)
+        let tag = PostgresTaxonomyRepository::update_tag(pool, &tag)
             .await
             .map_err(map_taxonomy_db_error)?
-            .ok_or(ForumError::NotFound)
+            .ok_or(ForumError::NotFound)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            audit_action,
+            "tag",
+            tag.tag_id,
+            &tag_audit_snapshot(&tag),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(tag)
     }
 
     pub async fn merge_tag(
@@ -1123,7 +1267,7 @@ impl AppState {
         };
 
         TaxonomyService::validate_tag_merge(source_tag_id, request.target_tag_id)?;
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         let source = PostgresTaxonomyRepository::find_tag(pool, source_tag_id)
             .await
             .map_err(|_| ForumError::Internal)?
@@ -1132,10 +1276,26 @@ impl AppState {
             .await
             .map_err(|_| ForumError::Internal)?
             .ok_or(ForumError::NotFound)?;
-        PostgresTaxonomyRepository::merge_tag(pool, &source, &target)
+        let tag = PostgresTaxonomyRepository::merge_tag(pool, &source, &target)
             .await
             .map_err(|_| ForumError::Internal)?
-            .ok_or(ForumError::NotFound)
+            .ok_or(ForumError::NotFound)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            "tag.merge",
+            "tag",
+            tag.tag_id,
+            &format!(
+                "source_tag_id={},source_name={},target={}",
+                source.tag_id,
+                source.name,
+                tag_audit_snapshot(&tag)
+            ),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(tag)
     }
 
     pub async fn delete_tag(&self, admin_id: Uuid, tag_id: Uuid) -> Result<TagItem, ForumError> {
@@ -1411,6 +1571,22 @@ impl AppState {
         self.set_post_pin(admin_id, post_id, false).await
     }
 
+    pub async fn recommend_post(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<ModerationPostAction, ForumError> {
+        self.set_post_recommend(admin_id, post_id, true).await
+    }
+
+    pub async fn unrecommend_post(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<ModerationPostAction, ForumError> {
+        self.set_post_recommend(admin_id, post_id, false).await
+    }
+
     pub async fn lock_post(
         &self,
         admin_id: Uuid,
@@ -1472,11 +1648,22 @@ impl AppState {
             };
         };
 
-        postgres_admin_user(pool, admin_id).await?;
-        PostgresModerationRepository::set_post_status(pool, post_id, &status)
+        let admin = postgres_admin_user(pool, admin_id).await?;
+        let action = PostgresModerationRepository::set_post_status(pool, post_id, &status)
             .await
             .map_err(|_| ForumError::Internal)?
-            .ok_or(ForumError::NotFound)
+            .ok_or(ForumError::NotFound)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            post_status_audit_action(&status),
+            "post",
+            post_id,
+            &post_moderation_audit_snapshot(&action),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(action)
     }
 
     async fn set_post_pin(
@@ -1493,7 +1680,7 @@ impl AppState {
             };
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         let current = PostgresModerationRepository::find_post_action(pool, post_id)
             .await
             .map_err(|_| ForumError::Internal)?
@@ -1501,10 +1688,64 @@ impl AppState {
         if current.status == PostStatus::Deleted {
             return Err(ForumError::Conflict("已删除帖子不能置顶".to_string()));
         }
-        PostgresModerationRepository::set_post_pin(pool, post_id, pinned)
+        let action = PostgresModerationRepository::set_post_pin(pool, post_id, pinned)
             .await
             .map_err(|_| ForumError::Internal)?
-            .ok_or(ForumError::NotFound)
+            .ok_or(ForumError::NotFound)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            if pinned { "post.pin" } else { "post.unpin" },
+            "post",
+            post_id,
+            &post_moderation_audit_snapshot(&action),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(action)
+    }
+
+    async fn set_post_recommend(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+        recommended: bool,
+    ) -> Result<ModerationPostAction, ForumError> {
+        let Some(pool) = &self.db else {
+            return if recommended {
+                self.forum.recommend_post(admin_id, post_id)
+            } else {
+                self.forum.unrecommend_post(admin_id, post_id)
+            };
+        };
+
+        let admin = postgres_admin_user(pool, admin_id).await?;
+        let current = PostgresModerationRepository::find_post_action(pool, post_id)
+            .await
+            .map_err(|_| ForumError::Internal)?
+            .ok_or(ForumError::NotFound)?;
+        if current.status == PostStatus::Deleted {
+            return Err(ForumError::Conflict("已删除帖子不能推荐".to_string()));
+        }
+        let action = PostgresModerationRepository::set_post_recommend(pool, post_id, recommended)
+            .await
+            .map_err(|_| ForumError::Internal)?
+            .ok_or(ForumError::NotFound)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            if recommended {
+                "post.recommend"
+            } else {
+                "post.unrecommend"
+            },
+            "post",
+            post_id,
+            &post_moderation_audit_snapshot(&action),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(action)
     }
 
     async fn set_post_lock(
@@ -1521,7 +1762,7 @@ impl AppState {
             };
         };
 
-        postgres_admin_user(pool, admin_id).await?;
+        let admin = postgres_admin_user(pool, admin_id).await?;
         let current = PostgresModerationRepository::find_post_action(pool, post_id)
             .await
             .map_err(|_| ForumError::Internal)?
@@ -1529,10 +1770,21 @@ impl AppState {
         if current.status == PostStatus::Deleted {
             return Err(ForumError::Conflict("已删除帖子不能锁定".to_string()));
         }
-        PostgresModerationRepository::set_post_lock(pool, post_id, locked)
+        let action = PostgresModerationRepository::set_post_lock(pool, post_id, locked)
             .await
             .map_err(|_| ForumError::Internal)?
-            .ok_or(ForumError::NotFound)
+            .ok_or(ForumError::NotFound)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            if locked { "post.lock" } else { "post.unlock" },
+            "post",
+            post_id,
+            &post_moderation_audit_snapshot(&action),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(action)
     }
 
     async fn set_comment_deleted(
@@ -1549,11 +1801,26 @@ impl AppState {
             };
         };
 
-        postgres_admin_user(pool, admin_id).await?;
-        PostgresModerationRepository::set_comment_deleted(pool, comment_id, deleted)
+        let admin = postgres_admin_user(pool, admin_id).await?;
+        let action = PostgresModerationRepository::set_comment_deleted(pool, comment_id, deleted)
             .await
             .map_err(|_| ForumError::Internal)?
-            .ok_or(ForumError::NotFound)
+            .ok_or(ForumError::NotFound)?;
+        PostgresAdminAuditRepository::insert_audit_log(
+            pool,
+            admin.user_id,
+            if deleted {
+                "comment.delete"
+            } else {
+                "comment.recover"
+            },
+            "comment",
+            comment_id,
+            &comment_moderation_audit_snapshot(&action),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?;
+        Ok(action)
     }
 
     pub async fn update_profile(
@@ -1611,8 +1878,9 @@ impl AppState {
         }
         let new_password =
             UserSettingsService::validate_password_change(&user.password_hash, request)?;
+        let new_password_hash = AuthService::hash_password(&new_password);
         let rows_affected =
-            PostgresUserSettingsRepository::update_password(pool, user_id, &new_password)
+            PostgresUserSettingsRepository::update_password(pool, user_id, &new_password_hash)
                 .await
                 .map_err(|_| ForumError::Internal)?;
         if rows_affected == 0 {
@@ -1697,17 +1965,22 @@ impl AppState {
             return Ok(home);
         }
 
-        home.topics =
-            PostgresPostRepository::list_homepage_summaries(pool, &home.query, current_user_id)
-                .await
-                .map_err(|_| ForumError::Internal)?
-                .into_iter()
-                .map(crate::domain::home::home_topic_from_post_summary)
-                .collect();
+        home.topics = PostgresPostRepository::list_homepage_summaries(
+            pool,
+            &home.query,
+            current_user_id,
+            postgres_demo_home_enabled(),
+        )
+        .await
+        .map_err(|_| ForumError::Internal)?
+        .into_iter()
+        .map(crate::domain::home::home_topic_from_post_summary)
+        .collect();
         let total =
             PostgresPostRepository::count_homepage_summaries(pool, &home.query, current_user_id)
                 .await
                 .map_err(|_| ForumError::Internal)? as usize;
+        let total = postgres_demo_home_total(&home.query).unwrap_or(total);
         let total_pages = total.div_ceil(home.query.page_size).max(1);
         let shown_start = if total == 0 {
             0
@@ -1873,13 +2146,49 @@ impl AppState {
         let reports = self.list_reports(user_id).await?;
         let audit_logs = self.audit_logs(user_id).await?;
         let roles = self.list_roles(user_id).await?;
+        let stats_summary = PostgresAdminStatsRepository::load_summary(pool)
+            .await
+            .map_err(|_| ForumError::Internal)?;
+        let hot_post = PostgresAdminStatsRepository::top_hot_post(pool)
+            .await
+            .map_err(|_| ForumError::Internal)?;
+        let hot_tag = PostgresAdminStatsRepository::top_hot_tag(pool)
+            .await
+            .map_err(|_| ForumError::Internal)?;
+        let online_connections = self.forum.total_online_connections()?;
 
         let mut dashboard = admin_dashboard_demo();
         dashboard.stats = vec![
-            admin_stat("用户总数", users.len(), "PostgreSQL"),
-            admin_stat("帖子总数", posts.len(), "PostgreSQL"),
-            admin_stat("评论总数", comments.len(), "PostgreSQL"),
-            admin_stat("在线用户", 0, "WebSocket"),
+            admin_stat("用户总数", stats_summary.user_count, "PostgreSQL"),
+            admin_stat("今日新增用户", stats_summary.today_user_count, "今日"),
+            admin_stat("帖子总数", stats_summary.post_count, "PostgreSQL"),
+            admin_stat("今日新增帖子", stats_summary.today_post_count, "今日"),
+            admin_stat("评论总数", stats_summary.comment_count, "PostgreSQL"),
+            admin_stat("今日新增评论", stats_summary.today_comment_count, "今日"),
+            admin_stat("点赞总数", stats_summary.like_count, "帖子 + 评论"),
+            admin_stat("当前在线用户数", online_connections as i64, "WebSocket"),
+            admin_stat_text(
+                "热门帖子",
+                hot_post
+                    .as_ref()
+                    .map(|post| post.title.as_str())
+                    .unwrap_or("暂无"),
+                hot_post
+                    .as_ref()
+                    .map(|post| format!("热度 {}", post.hot_score))
+                    .unwrap_or_else(|| "无公开帖子".to_string()),
+            ),
+            admin_stat_text(
+                "热门标签",
+                hot_tag
+                    .as_ref()
+                    .map(|tag| tag.name.as_str())
+                    .unwrap_or("暂无"),
+                hot_tag
+                    .as_ref()
+                    .map(|tag| format!("{} 篇帖子", tag.use_count))
+                    .unwrap_or_else(|| "无公开标签".to_string()),
+            ),
         ];
         dashboard.permissions = admin_permissions();
         dashboard.roles = roles;
@@ -2059,12 +2368,79 @@ async fn postgres_report_target_title(
 }
 
 #[cfg(feature = "ssr")]
-fn admin_stat(label: &str, value: usize, delta: &str) -> AdminStat {
+fn admin_stat(label: &str, value: i64, delta: &str) -> AdminStat {
     AdminStat {
         label: label.to_string(),
         value: value.to_string(),
         delta: delta.to_string(),
     }
+}
+
+#[cfg(feature = "ssr")]
+fn admin_stat_text(label: &str, value: &str, delta: String) -> AdminStat {
+    AdminStat {
+        label: label.to_string(),
+        value: value.to_string(),
+        delta,
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn post_status_audit_action(status: &PostStatus) -> &'static str {
+    match status {
+        PostStatus::Offline => "post.take_down",
+        PostStatus::Published => "post.restore",
+        PostStatus::Deleted => "post.delete",
+        PostStatus::Draft => "post.update",
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn post_moderation_audit_snapshot(action: &ModerationPostAction) -> String {
+    format!(
+        "post_id={},status={:?},pinned={},recommended={},locked={}",
+        action.post_id, action.status, action.pinned, action.recommended, action.locked
+    )
+}
+
+#[cfg(feature = "ssr")]
+fn comment_moderation_audit_snapshot(action: &ModerationCommentAction) -> String {
+    format!(
+        "comment_id={},post_id={},deleted={}",
+        action.comment_id, action.post_id, action.deleted
+    )
+}
+
+#[cfg(feature = "ssr")]
+fn report_audit_snapshot(report: &ReportItem) -> String {
+    format!(
+        "report_id={},target_type={:?},target_id={},status={:?},handler_id={:?}",
+        report.report_id, report.target_type, report.target_id, report.status, report.handler_id
+    )
+}
+
+#[cfg(feature = "ssr")]
+fn announcement_audit_snapshot(announcement: &AnnouncementItem) -> String {
+    format!(
+        "announcement_id={},title={},status={:?},pinned={}",
+        announcement.announcement_id, announcement.title, announcement.status, announcement.pinned
+    )
+}
+
+#[cfg(feature = "ssr")]
+fn category_audit_snapshot(category: &CategoryItem) -> String {
+    format!(
+        "category_id={},name={},color={},sort_order={},enabled={}",
+        category.category_id, category.name, category.color, category.sort_order, category.enabled
+    )
+}
+
+#[cfg(feature = "ssr")]
+fn tag_audit_snapshot(tag: &TagItem) -> String {
+    format!(
+        "tag_id={},name={},sort_order={},enabled={},use_count={}",
+        tag.tag_id, tag.name, tag.sort_order, tag.enabled, tag.use_count
+    )
 }
 
 #[cfg(feature = "ssr")]
@@ -2091,10 +2467,17 @@ fn dashboard_post_row(row: ModerationPostRow) -> AdminPostRow {
         author: row.author_name,
         category: row.category_name.unwrap_or_else(|| "未分类".to_string()),
         status: post_status_label(&row.status).to_string(),
+        recommended: row.recommended,
         locked: row.locked,
         actions: match row.status {
             PostStatus::Published => vec![
                 "下架".to_string(),
+                if row.recommended {
+                    "取消推荐"
+                } else {
+                    "推荐"
+                }
+                .to_string(),
                 if row.pinned { "取消置顶" } else { "置顶" }.to_string(),
                 if row.locked { "解锁" } else { "锁定" }.to_string(),
                 "删除".to_string(),
@@ -2257,6 +2640,19 @@ fn report_status_label(status: &ReportStatus) -> &'static str {
     }
 }
 
+#[cfg(feature = "ssr")]
+fn postgres_demo_home_total(query: &HomeQuery) -> Option<usize> {
+    let default_query = HomeQuery::default().normalized();
+    (postgres_demo_home_enabled() && query == &default_query).then_some(342)
+}
+
+#[cfg(feature = "ssr")]
+fn postgres_demo_home_enabled() -> bool {
+    std::env::var("POST_DEMO_SEED_HOME")
+        .map(|value| value == "true" || value == "1")
+        .unwrap_or(false)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeConfig {
     pub database_url: String,
@@ -2354,6 +2750,7 @@ struct ForumData {
     favorited_posts: HashSet<(Uuid, Uuid)>,
     follows: HashSet<(Uuid, Uuid)>,
     pinned_posts: HashSet<Uuid>,
+    recommended_posts: HashSet<Uuid>,
     disabled_users: HashSet<Uuid>,
     roles: HashMap<String, Role>,
     user_roles: HashMap<Uuid, Vec<String>>,
@@ -2421,7 +2818,7 @@ impl ForumStore {
         let mut user_registered_at = HashMap::new();
         user_registered_at.insert(author_id, now);
         let mut user_passwords = HashMap::new();
-        user_passwords.insert(author_id, "password".to_string());
+        user_passwords.insert(author_id, AuthService::hash_password("password"));
         let roles = seed_roles();
         let mut user_roles = HashMap::new();
         user_roles.insert(author_id, vec!["admin".to_string()]);
@@ -2457,6 +2854,7 @@ impl ForumStore {
                 favorited_posts: HashSet::new(),
                 follows: HashSet::new(),
                 pinned_posts: HashSet::new(),
+                recommended_posts: HashSet::new(),
                 disabled_users: HashSet::new(),
                 roles,
                 user_roles,
@@ -2495,7 +2893,7 @@ impl ForumStore {
                 data.user_registered_at
                     .insert(user_id, OffsetDateTime::now_utc());
                 data.user_passwords
-                    .insert(user_id, login.password.to_string());
+                    .insert(user_id, AuthService::hash_password(&login.password));
                 user
             });
         if data.disabled_users.contains(&user.user_id) {
@@ -2524,7 +2922,7 @@ impl ForumStore {
         }
 
         let user_id = next_uuid(&mut data);
-        let password = registration.password.clone();
+        let password = AuthService::hash_password(&registration.password);
         let user = AuthService::build_registered_user(user_id, registration);
         data.users.insert(user_id, user.clone());
         data.user_roles.insert(user_id, vec!["member".to_string()]);
@@ -3052,7 +3450,11 @@ impl ForumStore {
             .iter()
             .filter_map(|post_id| data.posts.get(post_id))
             .map(|post| {
-                ModerationService::post_row(post, data.pinned_posts.contains(&post.summary.post_id))
+                ModerationService::post_row(
+                    post,
+                    data.pinned_posts.contains(&post.summary.post_id),
+                    data.recommended_posts.contains(&post.summary.post_id),
+                )
             })
             .collect())
     }
@@ -3095,6 +3497,22 @@ impl ForumStore {
         post_id: Uuid,
     ) -> Result<ModerationPostAction, ForumError> {
         self.set_post_pin(admin_id, post_id, false)
+    }
+
+    pub fn recommend_post(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<ModerationPostAction, ForumError> {
+        self.set_post_recommend(admin_id, post_id, true)
+    }
+
+    pub fn unrecommend_post(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+    ) -> Result<ModerationPostAction, ForumError> {
+        self.set_post_recommend(admin_id, post_id, false)
     }
 
     pub fn lock_post(
@@ -3434,7 +3852,8 @@ impl ForumStore {
             .get(&user_id)
             .ok_or(ForumError::Unauthorized)?;
         let new_password = UserSettingsService::validate_password_change(stored_password, request)?;
-        data.user_passwords.insert(user_id, new_password);
+        data.user_passwords
+            .insert(user_id, AuthService::hash_password(&new_password));
         Ok(())
     }
 
@@ -3575,6 +3994,49 @@ impl ForumStore {
             .map(|user_id| data.post_reads.contains(&(user_id, post_id)))
             .unwrap_or(false);
         Ok(detail)
+    }
+
+    pub fn related_posts_for_post(
+        &self,
+        post_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<PostSummary>, ForumError> {
+        let data = self.inner.read().map_err(|_| ForumError::Internal)?;
+        let source = data.posts.get(&post_id).ok_or(ForumError::NotFound)?;
+        let source_tags = source
+            .summary
+            .tags
+            .iter()
+            .map(|tag| tag.to_lowercase())
+            .collect::<HashSet<_>>();
+        let source_category = source.summary.category_name.as_deref();
+        let mut related = data
+            .posts
+            .values()
+            .filter(|post| post.summary.post_id != post_id)
+            .filter(|post| post.status == PostStatus::Published)
+            .filter(|post| {
+                let shares_tag = post
+                    .summary
+                    .tags
+                    .iter()
+                    .any(|tag| source_tags.contains(&tag.to_lowercase()));
+                let shares_category = source_category.is_some()
+                    && post.summary.category_name.as_deref() == source_category;
+                shares_tag || shares_category
+            })
+            .map(|post| post.summary.clone())
+            .collect::<Vec<_>>();
+        related.sort_by(|left, right| {
+            let left_shared_tags = shared_tag_count(&left.tags, &source_tags);
+            let right_shared_tags = shared_tag_count(&right.tags, &source_tags);
+            right_shared_tags
+                .cmp(&left_shared_tags)
+                .then_with(|| right.comment_count.cmp(&left.comment_count))
+                .then_with(|| right.view_count.cmp(&left.view_count))
+        });
+        related.truncate(limit);
+        Ok(related)
     }
 
     pub fn autosave_draft(
@@ -3784,6 +4246,29 @@ impl ForumStore {
             .into_iter()
             .map(CommentService::mask_deleted)
             .collect())
+    }
+
+    pub fn comments_page_for_post(
+        &self,
+        post_id: Uuid,
+        query: CommentPageQuery,
+    ) -> Result<CommentPage, ForumError> {
+        let query = query.normalized();
+        let comments = self.comments_for_post(post_id)?;
+        let total = comments.len();
+        let start = (query.page.saturating_sub(1)) * query.page_size;
+        let page_comments = comments
+            .into_iter()
+            .skip(start)
+            .take(query.page_size)
+            .collect();
+        Ok(CommentPage {
+            comments: page_comments,
+            page: query.page,
+            page_size: query.page_size,
+            total,
+            total_pages: total.div_ceil(query.page_size).max(1),
+        })
     }
 
     pub fn toggle_post_like(
@@ -4011,6 +4496,11 @@ impl ForumStore {
         Ok(notification_connection_stats(&data, user_id))
     }
 
+    pub fn total_online_connections(&self) -> Result<usize, ForumError> {
+        let data = self.inner.read().map_err(|_| ForumError::Internal)?;
+        Ok(data.notification_connections.values().sum())
+    }
+
     pub fn pending_notification_pushes(
         &self,
         user_id: Uuid,
@@ -4177,10 +4667,13 @@ impl ForumStore {
         let mut data = self.write_data()?;
         ensure_admin(&data, admin_id)?;
         let was_pinned = data.pinned_posts.contains(&post_id);
+        let was_recommended = data.recommended_posts.contains(&post_id);
         let post = data.posts.get_mut(&post_id).ok_or(ForumError::NotFound)?;
-        let action = ModerationService::apply_post_status(post, status.clone(), was_pinned);
+        let action =
+            ModerationService::apply_post_status(post, status.clone(), was_pinned, was_recommended);
         if status == PostStatus::Deleted {
             data.pinned_posts.remove(&post_id);
+            data.recommended_posts.remove(&post_id);
         }
         Ok(action)
     }
@@ -4193,16 +4686,40 @@ impl ForumStore {
     ) -> Result<ModerationPostAction, ForumError> {
         let mut data = self.write_data()?;
         ensure_admin(&data, admin_id)?;
+        let recommended = data.recommended_posts.contains(&post_id);
         let post = data
             .posts
             .get(&post_id)
             .ok_or(ForumError::NotFound)?
             .clone();
-        let action = ModerationService::build_pin_action(&post, pinned)?;
+        let action = ModerationService::build_pin_action(&post, pinned, recommended)?;
         if pinned {
             data.pinned_posts.insert(post_id);
         } else {
             data.pinned_posts.remove(&post_id);
+        }
+        Ok(action)
+    }
+
+    fn set_post_recommend(
+        &self,
+        admin_id: Uuid,
+        post_id: Uuid,
+        recommended: bool,
+    ) -> Result<ModerationPostAction, ForumError> {
+        let mut data = self.write_data()?;
+        ensure_admin(&data, admin_id)?;
+        let pinned = data.pinned_posts.contains(&post_id);
+        let post = data
+            .posts
+            .get(&post_id)
+            .ok_or(ForumError::NotFound)?
+            .clone();
+        let action = ModerationService::build_recommend_action(&post, recommended, pinned)?;
+        if recommended {
+            data.recommended_posts.insert(post_id);
+        } else {
+            data.recommended_posts.remove(&post_id);
         }
         Ok(action)
     }
@@ -4216,9 +4733,9 @@ impl ForumStore {
         let mut data = self.write_data()?;
         ensure_admin(&data, admin_id)?;
         let pinned = data.pinned_posts.contains(&post_id);
+        let recommended = data.recommended_posts.contains(&post_id);
         let post = data.posts.get_mut(&post_id).ok_or(ForumError::NotFound)?;
-        let mut action = ModerationService::build_lock_action(post, locked)?;
-        action.pinned = pinned;
+        let action = ModerationService::build_lock_action(post, locked, pinned, recommended)?;
         Ok(action)
     }
 
@@ -4732,6 +5249,12 @@ fn flatten_user_comments(
         ));
     }
     items
+}
+
+fn shared_tag_count(tags: &[String], source_tags: &HashSet<String>) -> usize {
+    tags.iter()
+        .filter(|tag| source_tags.contains(&tag.to_lowercase()))
+        .count()
 }
 
 fn render_markdown_safe(markdown: &str) -> String {

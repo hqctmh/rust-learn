@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::domain::{comments::CommentNode, reactions::ToggleResult};
+use crate::domain::{
+    comments::{CommentNode, CommentPage, CommentPageQuery},
+    reactions::ToggleResult,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
 pub struct CommentRow {
@@ -61,6 +64,49 @@ order by c.created_at asc
 "#
     }
 
+    pub fn comments_for_post_page_sql() -> &'static str {
+        r#"
+with root_comments as (
+    select comment_id
+    from comments
+    where post_id = $1
+      and parent_comment_id is null
+    order by created_at asc
+    limit $2
+    offset $3
+)
+select
+    c.comment_id,
+    c.post_id,
+    c.parent_comment_id,
+    c.author_id,
+    u.nickname as author_name,
+    c.content,
+    c.status,
+    c.like_count,
+    c.created_at,
+    p.author_id as post_author_id
+from comments c
+join users u on u.user_id = c.author_id
+join posts p on p.post_id = c.post_id
+where c.post_id = $1
+  and (
+    c.comment_id in (select comment_id from root_comments)
+    or c.parent_comment_id in (select comment_id from root_comments)
+  )
+order by c.created_at asc
+"#
+    }
+
+    pub fn count_root_comments_sql() -> &'static str {
+        r#"
+select count(*)::bigint as "count!"
+from comments
+where post_id = $1
+  and parent_comment_id is null
+"#
+    }
+
     pub fn build_comment_tree(rows: Vec<CommentRow>) -> Vec<CommentNode> {
         let mut by_parent: HashMap<Option<Uuid>, Vec<CommentNode>> = HashMap::new();
         for row in rows {
@@ -107,6 +153,74 @@ order by c.created_at asc
         .await?;
 
         Ok(Self::build_comment_tree(rows))
+    }
+
+    pub async fn page_for_post(
+        pool: &sqlx::PgPool,
+        post_id: Uuid,
+        query: CommentPageQuery,
+    ) -> sqlx::Result<CommentPage> {
+        let query = query.normalized();
+        let total = sqlx::query!(
+            r#"
+select count(*)::bigint as "count!"
+from comments
+where post_id = $1
+  and parent_comment_id is null
+"#,
+            post_id
+        )
+        .fetch_one(pool)
+        .await?
+        .count;
+        let rows = sqlx::query_as!(
+            CommentRow,
+            r#"
+with root_comments as (
+    select comment_id
+    from comments
+    where post_id = $1
+      and parent_comment_id is null
+    order by created_at asc
+    limit $2
+    offset $3
+)
+select
+    c.comment_id,
+    c.post_id,
+    c.parent_comment_id,
+    c.author_id,
+    u.nickname as author_name,
+    c.content,
+    c.status,
+    c.like_count,
+    c.created_at,
+    p.author_id as post_author_id
+from comments c
+join users u on u.user_id = c.author_id
+join posts p on p.post_id = c.post_id
+where c.post_id = $1
+  and (
+    c.comment_id in (select comment_id from root_comments)
+    or c.parent_comment_id in (select comment_id from root_comments)
+  )
+order by c.created_at asc
+"#,
+            post_id,
+            query.page_size as i64,
+            ((query.page.saturating_sub(1)) * query.page_size) as i64
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let total = total.max(0) as usize;
+        Ok(CommentPage {
+            comments: Self::build_comment_tree(rows),
+            page: query.page,
+            page_size: query.page_size,
+            total,
+            total_pages: total.div_ceil(query.page_size).max(1),
+        })
     }
 
     pub async fn insert_comment(pool: &sqlx::PgPool, comment: &CommentNode) -> sqlx::Result<()> {

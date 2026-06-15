@@ -189,7 +189,7 @@
 * Leptos WebAssembly 包大小优化实践
 * 关于 resources! 宏在条件渲染下重复请求的问题
 * 使用 PostgreSQL JSONB 存储配置的方案选择
-* 关于 Signals 与派生状态的性能陷阱
+* Leptos Signals 与派生状态的性能陷阱
 * Axum 中间件处理 request body 的正确方式
 * 从零实现一个简单的 Leptos 组件库
 

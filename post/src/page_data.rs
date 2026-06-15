@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::domain::{
     admin::{AdminDashboard, admin_dashboard_demo},
     auth::Session,
-    comments::CommentNode,
+    comments::{CommentNode, CommentPage},
     files::FileAsset,
     home::{HomePageData, HomeQuery, dense_workbench_home},
     notifications::{NotificationCenter, notification_demo_center},
@@ -40,6 +40,8 @@ fn parse_optional_announcement_time(
 pub struct PostDetailPageData {
     pub post: PostDetail,
     pub comments: Vec<CommentNode>,
+    pub comments_page: CommentPage,
+    pub related_posts: Vec<PostSummary>,
 }
 
 #[server]
@@ -1781,6 +1783,76 @@ pub async fn unpin_admin_post(
 }
 
 #[server]
+pub async fn recommend_admin_post(
+    session_id: String,
+    post_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::state::AppState;
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let post_id = Uuid::parse_str(&post_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .recommend_post(session.user.user_id, post_id)
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, post_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
+pub async fn unrecommend_admin_post(
+    session_id: String,
+    post_id: String,
+) -> Result<AdminDashboard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::state::AppState;
+
+        let session_id = Uuid::parse_str(&session_id).map_err(server_error)?;
+        let post_id = Uuid::parse_str(&post_id).map_err(server_error)?;
+        let state = expect_context::<AppState>();
+        let session = state
+            .current_session(session_id)
+            .await
+            .map_err(server_error)?;
+        state
+            .unrecommend_post(session.user.user_id, post_id)
+            .await
+            .map_err(server_error)?;
+        return state
+            .admin_dashboard(session.user.user_id)
+            .await
+            .map_err(server_error);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (session_id, post_id);
+        Err(ServerFnError::ServerError(
+            "server function called outside SSR".to_string(),
+        ))
+    }
+}
+
+#[server]
 pub async fn lock_admin_post(
     session_id: String,
     post_id: String,
@@ -2136,11 +2208,24 @@ pub async fn load_post_detail_page(
             .post_detail_for_user(post_id, current_user_id)
             .await
             .map_err(server_error)?;
-        let comments = state
-            .comments_for_post(post_id)
+        let comments_page = state
+            .comments_page_for_post(
+                post_id,
+                crate::domain::comments::CommentPageQuery::default(),
+            )
             .await
             .map_err(server_error)?;
-        return Ok(PostDetailPageData { post, comments });
+        let comments = comments_page.comments.clone();
+        let related_posts = state
+            .related_posts_for_post(post_id, 3)
+            .await
+            .map_err(server_error)?;
+        return Ok(PostDetailPageData {
+            post,
+            comments,
+            comments_page,
+            related_posts,
+        });
     }
 
     #[cfg(not(feature = "ssr"))]
@@ -2170,6 +2255,14 @@ pub fn fallback_post_detail_page(post_id: String) -> PostDetailPageData {
             following_author: false,
         },
         comments: Vec::new(),
+        comments_page: CommentPage {
+            comments: Vec::new(),
+            page: 1,
+            page_size: 20,
+            total: 0,
+            total_pages: 1,
+        },
+        related_posts: Vec::new(),
     }
 }
 

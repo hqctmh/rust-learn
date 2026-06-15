@@ -14,10 +14,11 @@ use crate::{
         DeleteAdminComment, DeleteAdminPost, DeleteAdminRole, DisableAdminCategory,
         DisableAdminTag, DisableAdminUser, EnableAdminCategory, EnableAdminTag, EnableAdminUser,
         HandleAdminReport, LockAdminPost, MergeAdminTag, PinAdminPost, PublishAdminAnnouncement,
-        PushAdminAnnouncement, RecoverAdminComment, RejectAdminReport, RestoreAdminPost,
-        TakeDownAdminPost, UnlockAdminPost, UnpinAdminPost, UpdateAdminAnnouncement,
-        UpdateAdminCategory, UpdateAdminRole, UpdateAdminTag, UpdateAdminUserRoles,
-        WithdrawAdminAnnouncement, fallback_admin_dashboard, load_admin_dashboard,
+        PushAdminAnnouncement, RecommendAdminPost, RecoverAdminComment, RejectAdminReport,
+        RestoreAdminPost, TakeDownAdminPost, UnlockAdminPost, UnpinAdminPost, UnrecommendAdminPost,
+        UpdateAdminAnnouncement, UpdateAdminCategory, UpdateAdminRole, UpdateAdminTag,
+        UpdateAdminUserRoles, WithdrawAdminAnnouncement, fallback_admin_dashboard,
+        load_admin_dashboard,
     },
 };
 
@@ -59,6 +60,8 @@ fn AdminDashboardView(dashboard: AdminDashboard, session_id: String) -> impl Int
     let delete_post_action = ServerAction::<DeleteAdminPost>::new();
     let pin_post_action = ServerAction::<PinAdminPost>::new();
     let unpin_post_action = ServerAction::<UnpinAdminPost>::new();
+    let recommend_post_action = ServerAction::<RecommendAdminPost>::new();
+    let unrecommend_post_action = ServerAction::<UnrecommendAdminPost>::new();
     let lock_post_action = ServerAction::<LockAdminPost>::new();
     let unlock_post_action = ServerAction::<UnlockAdminPost>::new();
     let delete_comment_action = ServerAction::<DeleteAdminComment>::new();
@@ -90,6 +93,8 @@ fn AdminDashboardView(dashboard: AdminDashboard, session_id: String) -> impl Int
     let delete_post_pending = delete_post_action.pending();
     let pin_post_pending = pin_post_action.pending();
     let unpin_post_pending = unpin_post_action.pending();
+    let recommend_post_pending = recommend_post_action.pending();
+    let unrecommend_post_pending = unrecommend_post_action.pending();
     let lock_post_pending = lock_post_action.pending();
     let unlock_post_pending = unlock_post_action.pending();
     let delete_comment_pending = delete_comment_action.pending();
@@ -121,6 +126,8 @@ fn AdminDashboardView(dashboard: AdminDashboard, session_id: String) -> impl Int
     let delete_post_result = delete_post_action.value();
     let pin_post_result = pin_post_action.value();
     let unpin_post_result = unpin_post_action.value();
+    let recommend_post_result = recommend_post_action.value();
+    let unrecommend_post_result = unrecommend_post_action.value();
     let lock_post_result = lock_post_action.value();
     let unlock_post_result = unlock_post_action.value();
     let delete_comment_result = delete_comment_action.value();
@@ -213,6 +220,12 @@ fn AdminDashboardView(dashboard: AdminDashboard, session_id: String) -> impl Int
             return dashboard;
         }
         if let Some(Ok(dashboard)) = pin_post_result.get() {
+            return dashboard;
+        }
+        if let Some(Ok(dashboard)) = unrecommend_post_result.get() {
+            return dashboard;
+        }
+        if let Some(Ok(dashboard)) = recommend_post_result.get() {
             return dashboard;
         }
         if let Some(Ok(dashboard)) = unlock_post_result.get() {
@@ -454,6 +467,8 @@ fn AdminDashboardView(dashboard: AdminDashboard, session_id: String) -> impl Int
                                                     delete_post_action
                                                     pin_post_action
                                                     unpin_post_action
+                                                    recommend_post_action
+                                                    unrecommend_post_action
                                                     lock_post_action
                                                     unlock_post_action
                                                     take_down_post_pending
@@ -461,6 +476,8 @@ fn AdminDashboardView(dashboard: AdminDashboard, session_id: String) -> impl Int
                                                     delete_post_pending
                                                     pin_post_pending
                                                     unpin_post_pending
+                                                    recommend_post_pending
+                                                    unrecommend_post_pending
                                                     lock_post_pending
                                                     unlock_post_pending
                                                 />
@@ -475,6 +492,12 @@ fn AdminDashboardView(dashboard: AdminDashboard, session_id: String) -> impl Int
                                         return admin_post_action_feedback(result);
                                     }
                                     if let Some(result) = pin_post_result.get() {
+                                        return admin_post_action_feedback(result);
+                                    }
+                                    if let Some(result) = unrecommend_post_result.get() {
+                                        return admin_post_action_feedback(result);
+                                    }
+                                    if let Some(result) = recommend_post_result.get() {
                                         return admin_post_action_feedback(result);
                                     }
                                     if let Some(result) = unlock_post_result.get() {
@@ -1641,6 +1664,8 @@ fn PostRow(
     delete_post_action: ServerAction<DeleteAdminPost>,
     pin_post_action: ServerAction<PinAdminPost>,
     unpin_post_action: ServerAction<UnpinAdminPost>,
+    recommend_post_action: ServerAction<RecommendAdminPost>,
+    unrecommend_post_action: ServerAction<UnrecommendAdminPost>,
     lock_post_action: ServerAction<LockAdminPost>,
     unlock_post_action: ServerAction<UnlockAdminPost>,
     take_down_post_pending: Memo<bool>,
@@ -1648,6 +1673,8 @@ fn PostRow(
     delete_post_pending: Memo<bool>,
     pin_post_pending: Memo<bool>,
     unpin_post_pending: Memo<bool>,
+    recommend_post_pending: Memo<bool>,
+    unrecommend_post_pending: Memo<bool>,
     lock_post_pending: Memo<bool>,
     unlock_post_pending: Memo<bool>,
 ) -> impl IntoView {
@@ -1662,6 +1689,8 @@ fn PostRow(
     let show_delete = actions.iter().any(|action| action == "删除");
     let show_pin = actions.iter().any(|action| action == "置顶");
     let show_unpin = actions.iter().any(|action| action == "取消置顶");
+    let show_recommend = actions.iter().any(|action| action == "推荐");
+    let show_unrecommend = actions.iter().any(|action| action == "取消推荐");
     let show_lock = actions.iter().any(|action| action == "锁定");
     let show_unlock = actions.iter().any(|action| action == "解锁");
     let show_view = actions.iter().any(|action| action == "查看");
@@ -1744,6 +1773,44 @@ fn PostRow(
                                 disabled=move || unpin_post_pending.get() || disabled_session_id.is_empty()
                             >
                                 "取消置顶"
+                            </button>
+                        </ActionForm>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }}
+                {if show_recommend {
+                    let form_session_id = session_id.clone();
+                    let disabled_session_id = session_id.clone();
+                    view! {
+                        <ActionForm action=recommend_post_action>
+                            <input type="hidden" name="session_id" value=form_session_id/>
+                            <input type="hidden" name="post_id" value=post.post_id.to_string()/>
+                            <button
+                                class="btn btn-ghost btn-xs"
+                                type="submit"
+                                disabled=move || recommend_post_pending.get() || disabled_session_id.is_empty()
+                            >
+                                "推荐"
+                            </button>
+                        </ActionForm>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }}
+                {if show_unrecommend {
+                    let form_session_id = session_id.clone();
+                    let disabled_session_id = session_id.clone();
+                    view! {
+                        <ActionForm action=unrecommend_post_action>
+                            <input type="hidden" name="session_id" value=form_session_id/>
+                            <input type="hidden" name="post_id" value=post.post_id.to_string()/>
+                            <button
+                                class="btn btn-ghost btn-xs"
+                                type="submit"
+                                disabled=move || unrecommend_post_pending.get() || disabled_session_id.is_empty()
+                            >
+                                "取消推荐"
                             </button>
                         </ActionForm>
                     }.into_any()

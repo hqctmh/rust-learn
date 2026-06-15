@@ -24,9 +24,11 @@ impl ModerationService {
         post: &mut PostDetail,
         status: PostStatus,
         was_pinned: bool,
+        was_recommended: bool,
     ) -> ModerationPostAction {
         post.status = status.clone();
         let pinned = was_pinned && status != PostStatus::Deleted;
+        let recommended = was_recommended && status != PostStatus::Deleted;
         if status == PostStatus::Deleted {
             post.locked = false;
         }
@@ -35,6 +37,7 @@ impl ModerationService {
             post_id: post.summary.post_id,
             status,
             pinned,
+            recommended,
             locked: post.locked,
         }
     }
@@ -42,6 +45,7 @@ impl ModerationService {
     pub fn build_pin_action(
         post: &PostDetail,
         pinned: bool,
+        recommended: bool,
     ) -> Result<ModerationPostAction, ForumError> {
         if post.status == PostStatus::Deleted {
             return Err(ForumError::Conflict("已删除帖子不能置顶".to_string()));
@@ -51,6 +55,25 @@ impl ModerationService {
             post_id: post.summary.post_id,
             status: post.status.clone(),
             pinned,
+            recommended,
+            locked: post.locked,
+        })
+    }
+
+    pub fn build_recommend_action(
+        post: &PostDetail,
+        recommended: bool,
+        pinned: bool,
+    ) -> Result<ModerationPostAction, ForumError> {
+        if post.status == PostStatus::Deleted {
+            return Err(ForumError::Conflict("已删除帖子不能推荐".to_string()));
+        }
+
+        Ok(ModerationPostAction {
+            post_id: post.summary.post_id,
+            status: post.status.clone(),
+            pinned,
+            recommended,
             locked: post.locked,
         })
     }
@@ -58,6 +81,8 @@ impl ModerationService {
     pub fn build_lock_action(
         post: &mut PostDetail,
         locked: bool,
+        pinned: bool,
+        recommended: bool,
     ) -> Result<ModerationPostAction, ForumError> {
         if post.status == PostStatus::Deleted {
             return Err(ForumError::Conflict("已删除帖子不能锁定".to_string()));
@@ -67,7 +92,8 @@ impl ModerationService {
         Ok(ModerationPostAction {
             post_id: post.summary.post_id,
             status: post.status.clone(),
-            pinned: false,
+            pinned,
+            recommended,
             locked,
         })
     }
@@ -102,7 +128,7 @@ impl ModerationService {
         }
     }
 
-    pub fn post_row(post: &PostDetail, pinned: bool) -> ModerationPostRow {
+    pub fn post_row(post: &PostDetail, pinned: bool, recommended: bool) -> ModerationPostRow {
         ModerationPostRow {
             post_id: post.summary.post_id,
             title: post.summary.title.clone(),
@@ -110,6 +136,7 @@ impl ModerationService {
             category_name: post.summary.category_name.clone(),
             status: post.status.clone(),
             pinned,
+            recommended,
             locked: post.locked,
             comment_count: post.summary.comment_count,
             view_count: post.summary.view_count,

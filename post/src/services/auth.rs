@@ -1,3 +1,9 @@
+#[cfg(feature = "ssr")]
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+};
+use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
@@ -22,6 +28,8 @@ pub struct NormalizedRegistration {
 pub struct AuthService;
 
 impl AuthService {
+    const LEGACY_SHA256_PASSWORD_HASH_PREFIX: &'static str = "sha256$v1$";
+
     pub fn normalize_login(username: &str, password: &str) -> Result<NormalizedLogin, ForumError> {
         let username = username.trim();
         let password = password.trim();
@@ -86,11 +94,65 @@ impl AuthService {
         stored_password: &str,
         supplied_password: &str,
     ) -> Result<(), ForumError> {
-        if stored_password != supplied_password {
+        let matches = if stored_password.starts_with("$argon2") {
+            Self::verify_argon2_password(stored_password, supplied_password)
+        } else if stored_password.starts_with(Self::LEGACY_SHA256_PASSWORD_HASH_PREFIX) {
+            stored_password == Self::legacy_sha256_password_hash(supplied_password)
+        } else {
+            stored_password == supplied_password
+        };
+
+        if !matches {
             return Err(ForumError::Unauthorized);
         }
 
         Ok(())
+    }
+
+    pub fn hash_password(password: &str) -> String {
+        Self::argon2_password_hash(password)
+    }
+
+    #[cfg(feature = "ssr")]
+    fn argon2_password_hash(password: &str) -> String {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .expect("argon2 password hashing should work with generated salt")
+            .to_string()
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    fn argon2_password_hash(password: &str) -> String {
+        Self::legacy_sha256_password_hash(password)
+    }
+
+    #[cfg(feature = "ssr")]
+    fn verify_argon2_password(stored_password: &str, supplied_password: &str) -> bool {
+        PasswordHash::new(stored_password)
+            .ok()
+            .and_then(|parsed| {
+                Argon2::default()
+                    .verify_password(supplied_password.as_bytes(), &parsed)
+                    .ok()
+            })
+            .is_some()
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    fn verify_argon2_password(_stored_password: &str, _supplied_password: &str) -> bool {
+        false
+    }
+
+    fn legacy_sha256_password_hash(password: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(b"post-forum-password:v1:");
+        hasher.update(password.as_bytes());
+        format!(
+            "{}{:x}",
+            Self::LEGACY_SHA256_PASSWORD_HASH_PREFIX,
+            hasher.finalize()
+        )
     }
 
     pub fn build_session(session_id: Uuid, user: SessionUser, now: OffsetDateTime) -> Session {

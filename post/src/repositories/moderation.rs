@@ -16,6 +16,7 @@ pub struct ModerationPostDbRow {
     pub category_name: Option<String>,
     pub status: String,
     pub pinned: bool,
+    pub recommended: bool,
     pub locked: bool,
     pub comment_count: i64,
     pub view_count: i64,
@@ -31,6 +32,7 @@ impl From<ModerationPostDbRow> for ModerationPostRow {
             category_name: row.category_name,
             status: post_status_from_str(&row.status),
             pinned: row.pinned,
+            recommended: row.recommended,
             locked: row.locked,
             comment_count: row.comment_count,
             view_count: row.view_count,
@@ -44,6 +46,7 @@ pub struct ModerationPostActionRow {
     pub post_id: Uuid,
     pub status: String,
     pub pinned: bool,
+    pub recommended: bool,
     pub locked: bool,
 }
 
@@ -53,6 +56,7 @@ impl From<ModerationPostActionRow> for ModerationPostAction {
             post_id: row.post_id,
             status: post_status_from_str(&row.status),
             pinned: row.pinned,
+            recommended: row.recommended,
             locked: row.locked,
         }
     }
@@ -97,6 +101,7 @@ select
     c.name as "category_name?",
     p.status,
     p.is_pinned as "pinned!",
+    p.is_recommended as "recommended!",
     p.is_locked as "locked!",
     p.comment_count,
     p.view_count,
@@ -124,6 +129,7 @@ select
     post_id,
     status,
     is_pinned as "pinned!",
+    is_recommended as "recommended!",
     is_locked as "locked!"
 from posts
 where post_id = $1
@@ -150,6 +156,7 @@ update posts
 set
     status = $2,
     is_pinned = case when $2 = 'deleted' then false else is_pinned end,
+    is_recommended = case when $2 = 'deleted' then false else is_recommended end,
     is_locked = case when $2 = 'deleted' then false else is_locked end,
     updated_at = now()
 where post_id = $1
@@ -157,6 +164,7 @@ returning
     post_id,
     status,
     is_pinned as "pinned!",
+    is_recommended as "recommended!",
     is_locked as "locked!"
 "#,
             post_id,
@@ -186,6 +194,7 @@ returning
     post_id,
     status,
     is_pinned as "pinned!",
+    is_recommended as "recommended!",
     is_locked as "locked!"
 "#,
             post_id,
@@ -215,10 +224,41 @@ returning
     post_id,
     status,
     is_pinned as "pinned!",
+    is_recommended as "recommended!",
     is_locked as "locked!"
 "#,
             post_id,
             locked
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row.map(ModerationPostAction::from))
+    }
+
+    pub async fn set_post_recommend(
+        pool: &sqlx::PgPool,
+        post_id: Uuid,
+        recommended: bool,
+    ) -> sqlx::Result<Option<ModerationPostAction>> {
+        let row = sqlx::query_as!(
+            ModerationPostActionRow,
+            r#"
+update posts
+set
+    is_recommended = $2,
+    updated_at = now()
+where post_id = $1
+  and status <> 'deleted'
+returning
+    post_id,
+    status,
+    is_pinned as "pinned!",
+    is_recommended as "recommended!",
+    is_locked as "locked!"
+"#,
+            post_id,
+            recommended
         )
         .fetch_optional(pool)
         .await?;

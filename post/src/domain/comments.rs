@@ -18,6 +18,43 @@ pub struct CommentNode {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CommentPageQuery {
+    pub page: usize,
+    pub page_size: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CommentPage {
+    pub comments: Vec<CommentNode>,
+    pub page: usize,
+    pub page_size: usize,
+    pub total: usize,
+    pub total_pages: usize,
+}
+
+impl Default for CommentPageQuery {
+    fn default() -> Self {
+        Self {
+            page: 1,
+            page_size: 20,
+        }
+    }
+}
+
+impl CommentPageQuery {
+    pub fn normalized(mut self) -> Self {
+        if self.page == 0 {
+            self.page = 1;
+        }
+        if self.page_size == 0 {
+            self.page_size = 20;
+        }
+        self.page_size = self.page_size.min(100);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CommentInput {
     pub post_id: Uuid,
     pub parent_comment_id: Option<Uuid>,

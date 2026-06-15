@@ -1,6 +1,9 @@
+pub mod admin_audit;
+pub mod admin_stats;
 pub mod announcements;
 pub mod auth;
 pub mod comments;
+pub mod demo_seed;
 pub mod files;
 pub mod follows;
 pub mod home;

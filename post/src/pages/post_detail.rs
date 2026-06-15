@@ -88,6 +88,7 @@ fn PostDetailView(data: PostDetailPageData, session_id: String) -> impl IntoView
         .unwrap_or_else(|| "未分类".to_string());
     let tags = summary.tags.clone();
     let comments = data.comments.clone();
+    let related_posts = data.related_posts.clone();
     let comment_count = comments.len();
     let has_session = !session_id.is_empty();
     let post_id = summary.post_id.to_string();
@@ -342,9 +343,15 @@ fn PostDetailView(data: PostDetailPageData, session_id: String) -> impl IntoView
                 <section class="panel-card">
                     <h2>"相关推荐"</h2>
                     <ul class="related-list">
-                        <li><a href="/search?q=server%20function">"server function 中使用 SQLx 事务"</a><small>"7 回复"</small></li>
-                        <li><a href="/search?q=markdown">"Markdown 渲染与代码高亮"</a><small>"3 回复"</small></li>
-                        <li><a href="/search?q=axum">"Axum 中间件处理 request body"</a><small>"1 回复"</small></li>
+                        {related_posts.into_iter().map(|post| {
+                            let href = format!("/posts/{}", post.post_id);
+                            view! {
+                                <li>
+                                    <a href=href>{post.title}</a>
+                                    <small>{compact_count(post.comment_count)} " 回复"</small>
+                                </li>
+                            }
+                        }).collect_view()}
                     </ul>
                 </section>
                 <section class="panel-card">

@@ -334,6 +334,7 @@ limit $1 offset $2
         pool: &sqlx::PgPool,
         query: &HomeQuery,
         current_user_id: Option<Uuid>,
+        prefer_recommended: bool,
     ) -> sqlx::Result<Vec<PostSummary>> {
         let query = query.clone().normalized();
         let limit = query.page_size as i64;
@@ -436,9 +437,11 @@ group by
     lr.replied_at,
     p.is_pinned,
     p.is_locked,
+    p.is_recommended,
     pr.user_id,
     p.created_at
 order by
+    case when $9 then p.is_recommended else false end desc,
     p.is_pinned desc,
     case when $8 = 'hot' then p.view_count + p.comment_count * 20 + p.like_count * 10 + p.favorite_count * 5 end desc nulls last,
     case when $8 = 'replies' then p.comment_count end desc nulls last,
@@ -456,7 +459,8 @@ limit $1 offset $2
             tag,
             tab,
             since,
-            sort
+            sort,
+            prefer_recommended
         )
         .fetch_all(pool)
         .await?;
@@ -518,6 +522,109 @@ where p.status = 'published'
         .await?;
 
         Ok(row.total)
+    }
+
+    pub async fn list_related_summaries(
+        pool: &sqlx::PgPool,
+        post_id: Uuid,
+        limit: i64,
+        current_user_id: Option<Uuid>,
+    ) -> sqlx::Result<Vec<PostSummary>> {
+        let rows = sqlx::query_as!(
+            PostSummaryRow,
+            r#"
+with source_post as (
+    select post_id, category_id
+    from posts
+    where post_id = $1
+    limit 1
+),
+source_tags as (
+    select tag_id
+    from post_tags
+    where post_id = $1
+)
+select
+    p.post_id,
+    p.title,
+    p.summary,
+    p.author_id,
+    u.nickname as author_name,
+    u.avatar_url as author_avatar_url,
+    c.name as category_name,
+    coalesce(array_remove(array_agg(distinct t.name), null), array[]::text[]) as "tags!: Vec<String>",
+    p.view_count,
+    p.comment_count,
+    p.like_count,
+    p.favorite_count,
+    p.published_at,
+    lr.author_name as "last_reply_author_name?",
+    lr.author_avatar_url as "last_reply_author_avatar_url?",
+    lr.replied_at as "last_reply_at?",
+    p.is_pinned as "pinned!",
+    p.is_locked as "locked!",
+    pr.user_id is not null as "read_by_me!"
+from source_post sp
+join posts p on p.post_id <> sp.post_id
+join users u on u.user_id = p.author_id
+left join categories c on c.category_id = p.category_id
+left join post_tags pt on pt.post_id = p.post_id
+left join tags t on t.tag_id = pt.tag_id
+left join post_tags shared_pt on shared_pt.post_id = p.post_id
+    and shared_pt.tag_id in (select tag_id from source_tags)
+left join lateral (
+    select
+        cu.nickname as author_name,
+        cu.avatar_url as author_avatar_url,
+        lc.created_at as replied_at
+    from comments lc
+    join users cu on cu.user_id = lc.author_id
+    where lc.post_id = p.post_id
+      and lc.status = 'visible'
+    order by lc.created_at desc, lc.comment_id desc
+    limit 1
+) lr on true
+left join post_reads pr on pr.post_id = p.post_id and pr.user_id = $3
+where p.status = 'published'
+  and (
+      shared_pt.tag_id is not null
+      or (sp.category_id is not null and p.category_id = sp.category_id)
+  )
+group by
+    p.post_id,
+    p.title,
+    p.summary,
+    p.author_id,
+    u.nickname,
+    u.avatar_url,
+    c.name,
+    p.view_count,
+    p.comment_count,
+    p.like_count,
+    p.favorite_count,
+    p.published_at,
+    lr.author_name,
+    lr.author_avatar_url,
+    lr.replied_at,
+    p.is_pinned,
+    p.is_locked,
+    pr.user_id,
+    p.created_at
+order by
+    count(distinct shared_pt.tag_id) desc,
+    p.comment_count desc,
+    p.view_count desc,
+    coalesce(p.published_at, p.created_at) desc
+limit $2
+"#,
+            post_id,
+            limit,
+            current_user_id
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows.into_iter().map(PostSummary::from).collect())
     }
 
     pub async fn find_detail(
