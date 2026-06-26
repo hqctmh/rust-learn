@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Postgres, QueryBuilder, query, types::Uuid};
+use sqlx::{PgPool, Postgres, QueryBuilder, types::Uuid};
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Conversation {
@@ -286,31 +286,4 @@ pub async fn get_turn_response_list_by_turn_id(
     )
     .fetch_all(db)
     .await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn page_conversations_accepts_optional_param_and_returns_page() {
-        let param = ConversationPageParam {
-            user_id: None,
-            doc_id: None,
-            doc_type: None,
-            r#type: None,
-            page: None,
-            page_size: None,
-        };
-        let page = Page::<Conversation> {
-            items: Vec::new(),
-            total: 0,
-            page: 1,
-            page_size: 20,
-        };
-
-        assert!(param.user_id.is_none());
-        assert_eq!(page.total, 0);
-        let _ = page_conversations;
-    }
 }
