@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, types::Uuid};
+use sqlx::{PgPool, Postgres, QueryBuilder, query, types::Uuid};
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Conversation {
@@ -187,8 +187,105 @@ pub async fn delete_conversation(db: &PgPool, id: Uuid) -> sqlx::Result<()> {
     Ok(())
 }
 
-pub async fn create_turn(db: &PgPool, turn: &Turn) -> sqlx::Result<Turn> {
-    
+pub async fn create_turn(db: &PgPool, turn: Turn) -> sqlx::Result<Turn> {
+    sqlx::query_as!(
+        Turn,
+        r#"
+            insert into turn(conversation_id, input_context, document_content_version_id) VALUES ($1, $2, $3)
+            returning
+                id,
+                conversation_id,
+                input_context,
+                document_content_version_id,
+                created_at,
+                updated_at,
+                deleted_at
+        "#,
+        turn.conversation_id,
+        turn.input_context,
+        turn.document_content_version_id
+    )
+    .fetch_one(db)
+    .await
+}
+
+pub async fn select_turn_by_conversation_for_page(
+    db: &PgPool,
+    conversation_id: Uuid,
+    page_num: i64,
+    page_size: i64,
+) -> sqlx::Result<Page<Turn>> {
+    let record = sqlx::query!(
+        r#"
+            select count(1) as total from turn where conversation_id = $1
+       "#,
+        conversation_id,
+    )
+    .fetch_one(db)
+    .await?;
+
+    let turn_list=sqlx::query_as!(
+        Turn,
+        r#"
+            select id, conversation_id, input_context, document_content_version_id, created_at, updated_at, deleted_at
+            from turn where conversation_id = $1 limit $2 offset $3
+        "#,
+        conversation_id,
+        page_size,
+        (page_num-1)*page_size
+    ).fetch_all(db)
+    .await?;
+
+    Ok(Page {
+        items: turn_list,
+        total: record.total.unwrap_or(0),
+        page: page_num,
+        page_size,
+    })
+}
+
+pub async fn batch_insert_turn_response(
+    db: &PgPool,
+    response_list: Vec<TurnResponse>,
+) -> sqlx::Result<()> {
+    if response_list.is_empty() {
+        return Ok(());
+    }
+
+    let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
+        r#"
+            insert into turn_response(
+                turn_id,"type",response,created_at
+            )
+        "#,
+    );
+
+    query_builder.push_values(response_list, |mut b, response| {
+        b.push_bind(response.turn_id)
+            .push_bind(response.r#type)
+            .push_bind(response.response)
+            .push_bind(response.created_at);
+    });
+
+    query_builder.build().execute(db).await?;
+
+    Ok(())
+}
+
+pub async fn get_turn_response_list_by_turn_id(
+    db: &PgPool,
+    turn_id: Uuid,
+) -> sqlx::Result<Vec<TurnResponse>> {
+    sqlx::query_as!(
+        TurnResponse,
+        r#"
+            select id, turn_id, "type", response, created_at
+            from turn_response where turn_id = $1
+        "#,
+        turn_id
+    )
+    .fetch_all(db)
+    .await
 }
 
 #[cfg(test)]
@@ -216,5 +313,4 @@ mod tests {
         assert_eq!(page.total, 0);
         let _ = page_conversations;
     }
-    
 }
