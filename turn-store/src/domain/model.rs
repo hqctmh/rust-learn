@@ -167,6 +167,30 @@ pub async fn page_conversations(
     })
 }
 
+pub async fn delete_conversation(db: &PgPool, id: Uuid) -> sqlx::Result<()> {
+    let timestamp = Utc::now().timestamp_millis();
+
+    let result = sqlx::query!(
+        r#"
+            update conversation set deleted_at = $1 where id = $2 and deleted_at = 0
+        "#,
+        timestamp,
+        id
+    )
+    .execute(db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(sqlx::Error::RowNotFound);
+    }
+
+    Ok(())
+}
+
+pub async fn create_turn(db: &PgPool, turn: &Turn) -> sqlx::Result<Turn> {
+    
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,4 +216,5 @@ mod tests {
         assert_eq!(page.total, 0);
         let _ = page_conversations;
     }
+    
 }
