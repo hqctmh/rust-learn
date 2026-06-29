@@ -1,0 +1,21 @@
+# command: jeprof --show_bytes --text /Users/mah2/project/rust-learn/sqlx-demo/target/debug/jemalloc_profile_demo /Users/mah2/project/rust-learn/turn-store/jemalloc-vec-1g.heap
+# symbolizer: atos -o /Users/mah2/project/rust-learn/sqlx-demo/target/debug/jemalloc_profile_demo -l 0x00000001005b0000 <address>
+
+Total: 4294967296 B
+4294967296 100.0% 100.0% 4294967296 100.0% 0x00000001006e4690  => _rjem_je_prof_backtrace (in jemalloc_profile_demo) + 92
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b0ba7  => alloc::vec::Vec$LT$T$GT$::with_capacity::ha9450373e8a6a30d (in jemalloc_profile_demo) (mod.rs:524)
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b1167  => _$LT$tikv_jemallocator..Jemalloc$u20$as$u20$core..alloc..global..GlobalAlloc$GT$::alloc::h7fb538c7e5da891d (in jemalloc_profile_demo) (lib.rs:100)
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b1407  => std::sys::backtrace::__rust_begin_short_backtrace::h6d5dff7c4bc5ed68 (in jemalloc_profile_demo) (backtrace.rs:166)
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b253f  => _RNvCsGIExRX8pES_7___rustc12___rust_alloc (in jemalloc_profile_demo) (jemalloc_profile_demo.rs:13)
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b2caf  => jemalloc_profile_demo::main::hc1df7ceb732c9d55 (in jemalloc_profile_demo) (jemalloc_profile_demo.rs:33)
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b2f63  => main (in jemalloc_profile_demo) + 35
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b3917  => std::rt::lang_start::h67a135cb08879bf0 (in jemalloc_profile_demo) (rt.rs:205)
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b393f  => std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$::hddd87f77fff4172f (in jemalloc_profile_demo) (rt.rs:206)
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b3a07  => core::ops::function::FnOnce::call_once::h37bd85aff6e80852 (in jemalloc_profile_demo) (function.rs:250)
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005b8d73  => alloc::raw_vec::RawVecInner$LT$A$GT$::with_capacity_in::h461625de896dece1 (in jemalloc_profile_demo) + 67
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005c36ef  => _rjem_je_malloc_default (in jemalloc_profile_demo) + 6191
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001005d3593  => _rjem_malloc (in jemalloc_profile_demo) + 591
+       0   0.0% 100.0% 4294967296 100.0% 0x00000001006ba983  => _rjem_je_prof_tctx_create (in jemalloc_profile_demo) + 495
+       0   0.0% 100.0% 4294967296 100.0% 0x0000000100765e23  => _RNvNtCsaLOjE9VYtxK_3std2rt19lang_start_internal (in jemalloc_profile_demo) + 951
+       0   0.0% 100.0% 4294967296 100.0% 0x0000000100771867  => _RNvMs4_NtCs8dnTdrJsiec_5alloc7raw_vecNtB5_11RawVecInner15try_allocate_inCsixjwb4TfRM4_5gimli (in jemalloc_profile_demo) + 155
+       0   0.0% 100.0% 4294967296 100.0% 0x000000018c7d3dff  => 0x000000018c7d3dff

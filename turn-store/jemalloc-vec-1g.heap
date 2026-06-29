@@ -1,0 +1,55 @@
+heap_v2/524288
+  t*: 1: 4294967296 [0: 0]
+  t0: 1: 4294967296 [0: 0]
+@ 0x1006e4690 0x1006ba984 0x1005c36f0 0x1005d3594 0x1005b1168 0x1005b2540 0x100771868 0x1005b8d74 0x1005b0ba8 0x1005b2cb0 0x1005b3a08 0x1005b1408 0x1005b3940 0x100765e24 0x1005b3918 0x1005b2f64 0x18c7d3e00
+  t*: 1: 4294967296 [0: 0]
+  t0: 1: 4294967296 [0: 0]
+
+MAPPED_LIBRARIES:
+00000001005b0000-00000001007bc000: /Users/mah2/project/rust-learn/sqlx-demo/target/debug/jemalloc_profile_demo
+000000019ca1a000-000000019ca212bc: /usr/lib/libiconv.2.dylib
+000000019c977000-000000019c977c9c: /usr/lib/libcharset.1.dylib
+000000019c9e0000-000000019c9e1ce4: /usr/lib/libSystem.B.dylib
+000000019c9da000-000000019c9df09c: /usr/lib/system/libcache.dylib
+000000019c995000-000000019c9a23a8: /usr/lib/system/libcommonCrypto.dylib
+000000019c9c0000-000000019c9c3988: /usr/lib/system/libcompiler_rt.dylib
+000000019c9b5000-000000019c9bf800: /usr/lib/system/libcopyfile.dylib
+000000018c8d5000-000000018c9835f8: /usr/lib/system/libcorecrypto.dylib
+000000018c9d5000-000000018ca1c240: /usr/lib/system/libdispatch.dylib
+000000018c77f000-000000018c7b3d08: /usr/lib/system/libdyld.dylib
+000000019c9d0000-000000019c9d0f28: /usr/lib/system/libkeymgr.dylib
+000000019c978000-000000019c97b528: /usr/lib/system/libmacho.dylib
+000000019bc0f000-000000019bc121fc: /usr/lib/system/libquarantine.dylib
+000000019c9cd000-000000019c9cfbf8: /usr/lib/system/libremovefile.dylib
+000000019333d000-0000000193354fe0: /usr/lib/system/libsystem_asl.dylib
+000000018c85b000-000000018c85e229: /usr/lib/system/libsystem_blocks.dylib
+000000018ca20000-000000018caa0da0: /usr/lib/system/libsystem_c.dylib
+000000019c9c4000-000000019c9c878c: /usr/lib/system/libsystem_collections.dylib
+000000019a5b0000-000000019a5b45d8: /usr/lib/system/libsystem_configuration.dylib
+000000019919f000-00000001991d7258: /usr/lib/system/libsystem_containermanager.dylib
+000000019c3ae000-000000019c3b4d04: /usr/lib/system/libsystem_coreservices.dylib
+0000000190b68000-0000000190b71e60: /usr/lib/system/libsystem_darwin.dylib
+0000000291834000-0000000291837a4c: /usr/lib/system/libsystem_darwindirectory.dylib
+000000019c9d1000-000000019c9d9e38: /usr/lib/system/libsystem_dnssd.dylib
+0000000291838000-00000002918415d4: /usr/lib/system/libsystem_eligibility.dylib
+000000018ca1d000-000000018ca1fffc: /usr/lib/system/libsystem_featureflags.dylib
+000000018cba1000-000000018cbd06ec: /usr/lib/system/libsystem_info.dylib
+000000019c939000-000000019c976a78: /usr/lib/system/libsystem_m.dylib
+000000018c984000-000000018c9d41d8: /usr/lib/system/libsystem_malloc.dylib
+00000001932a0000-00000001932baf7c: /usr/lib/system/libsystem_networkextension.dylib
+0000000190fd3000-0000000190fe51b7: /usr/lib/system/libsystem_notify.dylib
+000000019a5b5000-000000019a5bb8d0: /usr/lib/system/libsystem_sandbox.dylib
+0000000291842000-000000029184988c: /usr/lib/system/libsystem_sanitizers.dylib
+000000019c9c9000-000000019c9cc4d0: /usr/lib/system/libsystem_secinit.dylib
+000000018cb4d000-000000018cb8a2b0: /usr/lib/system/libsystem_kernel.dylib
+000000018cb98000-000000018cba0964: /usr/lib/system/libsystem_platform.dylib
+000000018cb8b000-000000018cb97b3c: /usr/lib/system/libsystem_pthread.dylib
+0000000194efb000-0000000194f03388: /usr/lib/system/libsystem_symptoms.dylib
+000000018c8b4000-000000018c8d4a00: /usr/lib/system/libsystem_trace.dylib
+000000029184a000-000000029184abb8: /usr/lib/system/libsystem_trial.dylib
+000000019c9a3000-000000019c9acca4: /usr/lib/system/libunwind.dylib
+000000018c85f000-000000018c8b3560: /usr/lib/system/libxpc.dylib
+000000018c72c000-000000018c77eb4c: /usr/lib/libobjc.A.dylib
+000000018cb32000-000000018cb4c760: /usr/lib/libc++abi.dylib
+000000028fc17000-000000028fc1e34a: /usr/lib/libRosetta.dylib
+000000018caa1000-000000018cb31ae8: /usr/lib/libc++.1.dylib
