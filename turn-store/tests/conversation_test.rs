@@ -1,15 +1,20 @@
-use chrono::Utc;
-use sqlx::PgPool;
+use anyhow::Context;
+use jiff::Timestamp;
 use turn_store::domain::model::{
-    Conversation, ConversationPageParam, create_conversation, get_conversation_by_id,
-    page_conversations,
+    Conversation, ConversationPageParam, connect_database, create_conversation,
+    get_conversation_by_id, page_conversations,
 };
 use uuid::Uuid;
 
-#[sqlx::test(fixtures("conversation"))]
-async fn test_create_conversation(db: PgPool) -> sqlx::Result<()> {
+#[tokio::test]
+#[ignore = "需要设置 DATABASE_URL，并确保数据库已执行 migrations"]
+async fn test_create_conversation() -> anyhow::Result<()> {
+    let database_url = std::env::var("DATABASE_URL").context("缺少 DATABASE_URL")?;
+    let mut db = connect_database(&database_url).await?;
+    let now = Timestamp::now();
+
     let conversation = create_conversation(
-        &db,
+        &mut db,
         Conversation {
             id: Uuid::nil(),
             doc_id: "doc-1".to_string(),
@@ -18,19 +23,19 @@ async fn test_create_conversation(db: PgPool) -> sqlx::Result<()> {
             title: "标题".to_string(),
             r#type: "chat".to_string(),
             inline_type: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: now,
+            updated_at: now,
             deleted_at: 0,
         },
     )
     .await?;
 
     println!("{:?}", conversation);
-    let conversation = get_conversation_by_id(&db, conversation.id).await?;
+    let conversation = get_conversation_by_id(&mut db, conversation.id).await?;
     println!("{:?}", conversation);
 
     let page = page_conversations(
-        &db,
+        &mut db,
         ConversationPageParam {
             user_id: Some(1),
             page: Some(1),

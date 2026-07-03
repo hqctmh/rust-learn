@@ -1,40 +1,57 @@
-use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Postgres, QueryBuilder, types::Uuid};
+use jiff::Timestamp;
+use toasty::Db;
+use uuid::Uuid;
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, toasty::Model)]
+#[table = "conversation"]
 pub struct Conversation {
+    #[key]
+    #[auto]
     pub id: Uuid,
     pub doc_id: String,
     pub doc_type: String,
     pub user_id: i64,
     pub title: String,
-    #[sqlx(rename = "type")]
+    #[column("type")]
     pub r#type: String,
     pub inline_type: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[column(type = timestamp(6))]
+    pub created_at: Timestamp,
+    #[column(type = timestamp(6))]
+    pub updated_at: Timestamp,
     pub deleted_at: i64,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, toasty::Model)]
+#[table = "turn"]
 pub struct Turn {
+    #[key]
+    #[auto]
     pub id: Uuid,
     pub conversation_id: Uuid,
+    #[column(type = text)]
     pub input_context: String,
     pub document_content_version_id: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[column(type = timestamp(6))]
+    pub created_at: Timestamp,
+    #[column(type = timestamp(6))]
+    pub updated_at: Timestamp,
     pub deleted_at: i64,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, toasty::Model)]
+#[table = "turn_response"]
 pub struct TurnResponse {
+    #[key]
+    #[auto]
     pub id: Uuid,
     pub turn_id: Uuid,
-    #[sqlx(rename = "type")]
+    #[column("type")]
     pub r#type: String,
+    #[column(type = text)]
     pub response: String,
-    pub created_at: DateTime<Utc>,
+    #[column(type = timestamp(6))]
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone)]
@@ -55,235 +72,164 @@ pub struct ConversationPageParam {
     pub page_size: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
-struct PageTotal {
-    total: i64,
+pub async fn connect_database(url: &str) -> toasty::Result<Db> {
+    toasty::Db::builder()
+        .models(toasty::models!(Conversation, Turn, TurnResponse))
+        .connect(url)
+        .await
 }
 
 pub async fn create_conversation(
-    db: &PgPool,
+    db: &mut Db,
     conversation: Conversation,
-) -> sqlx::Result<Conversation> {
-    sqlx::query_as!(
-        Conversation,
-        r#"
-            insert into conversation(doc_id, doc_type, user_id, title, type, inline_type) VALUES ($1, $2, $3, $4, $5, $6)
-            returning
-                id,
-            doc_id,
-            doc_type,
-            user_id,
-            title,
-            "type",
-            inline_type,
-            created_at,
-            updated_at,
-            deleted_at
-        "#,
-        conversation.doc_id,
-        conversation.doc_type,
-        conversation.user_id,
-        conversation.title,
-        conversation.r#type,
-        conversation.inline_type
-    )
-    .fetch_one(db)
-    .await
+) -> toasty::Result<Conversation> {
+    Conversation::create()
+        .doc_id(conversation.doc_id)
+        .doc_type(conversation.doc_type)
+        .user_id(conversation.user_id)
+        .title(conversation.title)
+        .r#type(conversation.r#type)
+        .inline_type(conversation.inline_type)
+        .created_at(conversation.created_at)
+        .updated_at(conversation.updated_at)
+        .deleted_at(conversation.deleted_at)
+        .exec(db)
+        .await
 }
 
-pub async fn get_conversation_by_id(db: &PgPool, id: Uuid) -> sqlx::Result<Conversation> {
-    sqlx::query_as!(
-        Conversation,
-        r#"
-            select id,doc_id,doc_type,user_id,title,"type",inline_type,created_at,updated_at,deleted_at
-            from conversation where id=$1
-        "#,
-        id
-    )
-    .fetch_one(db)
-    .await
+pub async fn get_conversation_by_id(db: &mut Db, id: Uuid) -> toasty::Result<Conversation> {
+    Conversation::filter_by_id(id).get(db).await
 }
 
 pub async fn page_conversations(
-    db: &PgPool,
+    db: &mut Db,
     param: ConversationPageParam,
-) -> sqlx::Result<Page<Conversation>> {
+) -> toasty::Result<Page<Conversation>> {
     let page = param.page.unwrap_or(1).max(1);
     let page_size = param.page_size.unwrap_or(20).max(1);
-    let limit = page_size.max(1);
-    let offset = (page - 1) * limit;
-    let doc_id = param.doc_id.as_deref();
-    let doc_type = param.doc_type.as_deref();
-    let conversation_type = param.r#type.as_deref();
+    let limit = usize::try_from(page_size).unwrap_or(usize::MAX);
+    let offset = usize::try_from((page - 1) * page_size).unwrap_or(usize::MAX);
 
-    let total = sqlx::query_as!(
-        PageTotal,
-        r#"
-            select count(*) as "total!"
-            from conversation
-            where ($1::bigint is null or user_id = $1)
-                and ($2::text is null or doc_id = $2)
-                and ($3::text is null or doc_type = $3)
-                and ($4::text is null or "type" = $4)
-                and deleted_at = 0
-        "#,
-        param.user_id,
-        doc_id,
-        doc_type,
-        conversation_type
-    )
-    .fetch_one(db)
-    .await?
-    .total;
+    let query = conversation_page_query(param);
+    let total = query.clone().count().exec(db).await?;
 
-    let items = sqlx::query_as!(
-        Conversation,
-        r#"
-            select id,doc_id,doc_type,user_id,title,"type",inline_type,created_at,updated_at,deleted_at
-            from conversation
-            where ($1::bigint is null or user_id = $1)
-                and ($2::text is null or doc_id = $2)
-                and ($3::text is null or doc_type = $3)
-                and ($4::text is null or "type" = $4)
-                and deleted_at = 0
-            order by updated_at desc, id desc
-            limit $5 offset $6
-        "#,
-        param.user_id,
-        doc_id,
-        doc_type,
-        conversation_type,
-        limit,
-        offset
-    )
-    .fetch_all(db)
-    .await?;
+    let items = query
+        .order_by((
+            Conversation::fields().updated_at().desc(),
+            Conversation::fields().id().desc(),
+        ))
+        .limit(limit)
+        .offset(offset)
+        .exec(db)
+        .await?;
 
     Ok(Page {
         items,
-        total,
+        total: i64::try_from(total).unwrap_or(i64::MAX),
         page,
         page_size,
     })
 }
 
-pub async fn delete_conversation(db: &PgPool, id: Uuid) -> sqlx::Result<()> {
-    let timestamp = Utc::now().timestamp_millis();
+pub async fn delete_conversation(db: &mut Db, id: Uuid) -> toasty::Result<()> {
+    let timestamp = Timestamp::now().as_millisecond();
 
-    let result = sqlx::query!(
-        r#"
-            update conversation set deleted_at = $1 where id = $2 and deleted_at = 0
-        "#,
-        timestamp,
-        id
-    )
-    .execute(db)
-    .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(sqlx::Error::RowNotFound);
-    }
+    Conversation::filter_by_id(id)
+        .filter(Conversation::fields().deleted_at().eq(0))
+        .update()
+        .deleted_at(timestamp)
+        .exec(db)
+        .await?;
 
     Ok(())
 }
 
-pub async fn create_turn(db: &PgPool, turn: Turn) -> sqlx::Result<Turn> {
-    sqlx::query_as!(
-        Turn,
-        r#"
-            insert into turn(conversation_id, input_context, document_content_version_id) VALUES ($1, $2, $3)
-            returning
-                id,
-                conversation_id,
-                input_context,
-                document_content_version_id,
-                created_at,
-                updated_at,
-                deleted_at
-        "#,
-        turn.conversation_id,
-        turn.input_context,
-        turn.document_content_version_id
-    )
-    .fetch_one(db)
-    .await
+pub async fn create_turn(db: &mut Db, turn: Turn) -> toasty::Result<Turn> {
+    Turn::create()
+        .conversation_id(turn.conversation_id)
+        .input_context(turn.input_context)
+        .document_content_version_id(turn.document_content_version_id)
+        .created_at(turn.created_at)
+        .updated_at(turn.updated_at)
+        .deleted_at(turn.deleted_at)
+        .exec(db)
+        .await
 }
 
 pub async fn select_turn_by_conversation_for_page(
-    db: &PgPool,
+    db: &mut Db,
     conversation_id: Uuid,
     page_num: i64,
     page_size: i64,
-) -> sqlx::Result<Page<Turn>> {
-    let record = sqlx::query!(
-        r#"
-            select count(1) as total from turn where conversation_id = $1
-       "#,
-        conversation_id,
-    )
-    .fetch_one(db)
-    .await?;
+) -> toasty::Result<Page<Turn>> {
+    let page = page_num.max(1);
+    let page_size = page_size.max(1);
+    let limit = usize::try_from(page_size).unwrap_or(usize::MAX);
+    let offset = usize::try_from((page - 1) * page_size).unwrap_or(usize::MAX);
+    let query = Turn::filter(Turn::fields().conversation_id().eq(conversation_id));
+    let total = query.clone().count().exec(db).await?;
 
-    let turn_list=sqlx::query_as!(
-        Turn,
-        r#"
-            select id, conversation_id, input_context, document_content_version_id, created_at, updated_at, deleted_at
-            from turn where conversation_id = $1 limit $2 offset $3
-        "#,
-        conversation_id,
-        page_size,
-        (page_num-1)*page_size
-    ).fetch_all(db)
-    .await?;
+    let items = query.limit(limit).offset(offset).exec(db).await?;
 
     Ok(Page {
-        items: turn_list,
-        total: record.total.unwrap_or(0),
-        page: page_num,
+        items,
+        total: i64::try_from(total).unwrap_or(i64::MAX),
+        page,
         page_size,
     })
 }
 
 pub async fn batch_insert_turn_response(
-    db: &PgPool,
+    db: &mut Db,
     response_list: Vec<TurnResponse>,
-) -> sqlx::Result<()> {
+) -> toasty::Result<()> {
     if response_list.is_empty() {
         return Ok(());
     }
 
-    let mut query_builder: QueryBuilder<Postgres> = QueryBuilder::new(
-        r#"
-            insert into turn_response(
-                turn_id,"type",response,created_at
-            )
-        "#,
-    );
+    let mut create_many = TurnResponse::create_many();
 
-    query_builder.push_values(response_list, |mut b, response| {
-        b.push_bind(response.turn_id)
-            .push_bind(response.r#type)
-            .push_bind(response.response)
-            .push_bind(response.created_at);
-    });
+    for response in response_list {
+        create_many = create_many.with_item(|item| {
+            item.turn_id(response.turn_id)
+                .r#type(response.r#type)
+                .response(response.response)
+                .created_at(response.created_at)
+        });
+    }
 
-    query_builder.build().execute(db).await?;
+    create_many.exec(db).await?;
 
     Ok(())
 }
 
 pub async fn get_turn_response_list_by_turn_id(
-    db: &PgPool,
+    db: &mut Db,
     turn_id: Uuid,
-) -> sqlx::Result<Vec<TurnResponse>> {
-    sqlx::query_as!(
-        TurnResponse,
-        r#"
-            select id, turn_id, "type", response, created_at
-            from turn_response where turn_id = $1
-        "#,
-        turn_id
-    )
-    .fetch_all(db)
-    .await
+) -> toasty::Result<Vec<TurnResponse>> {
+    TurnResponse::filter(TurnResponse::fields().turn_id().eq(turn_id))
+        .order_by(TurnResponse::fields().created_at().asc())
+        .exec(db)
+        .await
+}
+
+fn conversation_page_query(
+    param: ConversationPageParam,
+) -> <Conversation as toasty::schema::Model>::Query {
+    let mut query = Conversation::all().filter(Conversation::fields().deleted_at().eq(0));
+
+    if let Some(user_id) = param.user_id {
+        query = query.filter(Conversation::fields().user_id().eq(user_id));
+    }
+    if let Some(doc_id) = param.doc_id {
+        query = query.filter(Conversation::fields().doc_id().eq(doc_id));
+    }
+    if let Some(doc_type) = param.doc_type {
+        query = query.filter(Conversation::fields().doc_type().eq(doc_type));
+    }
+    if let Some(conversation_type) = param.r#type {
+        query = query.filter(Conversation::fields().r#type().eq(conversation_type));
+    }
+
+    query
 }
