@@ -1,5 +1,4 @@
 use sqlx::PgPool;
-use uuid::Uuid;
 use turn_store::{
     domain::{
         event::AgentEvent,
@@ -9,6 +8,7 @@ use turn_store::{
         create_conversation_and_turn, create_turn_for_conversation, persist_event,
     },
 };
+use uuid::Uuid;
 
 #[sqlx::test]
 async fn follow_up_turns_reuse_one_conversation(db: PgPool) -> sqlx::Result<()> {
@@ -53,12 +53,11 @@ async fn follow_up_turns_reuse_one_conversation(db: PgPool) -> sqlx::Result<()> 
             .bind(conversation.id)
             .fetch_one(&db)
             .await?;
-    let turn_count = sqlx::query_scalar::<_, i64>(
-        "select count(*) from \"turn\" where conversation_id = $1",
-    )
-    .bind(conversation.id)
-    .fetch_one(&db)
-    .await?;
+    let turn_count =
+        sqlx::query_scalar::<_, i64>("select count(*) from \"turn\" where conversation_id = $1")
+            .bind(conversation.id)
+            .fetch_one(&db)
+            .await?;
 
     assert_eq!(conversation_count, 1);
     assert_eq!(turn_count, 3);
@@ -69,9 +68,7 @@ async fn follow_up_turns_reuse_one_conversation(db: PgPool) -> sqlx::Result<()> 
 }
 
 #[sqlx::test]
-async fn follow_up_turn_rejects_missing_or_deleted_conversation(
-    db: PgPool,
-) -> sqlx::Result<()> {
+async fn follow_up_turn_rejects_missing_or_deleted_conversation(db: PgPool) -> sqlx::Result<()> {
     let missing = create_turn_for_conversation(
         &db,
         Uuid::nil(),

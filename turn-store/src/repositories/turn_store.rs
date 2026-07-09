@@ -70,11 +70,7 @@ pub async fn create_turn_for_conversation(
     .await
 }
 
-pub async fn persist_event(
-    db: &PgPool,
-    turn_id: Uuid,
-    event: &AgentEvent,
-) -> sqlx::Result<()> {
+pub async fn persist_event(db: &PgPool, turn_id: Uuid, event: &AgentEvent) -> sqlx::Result<()> {
     match event.persistence_action() {
         PersistenceAction::AppendText(content) => {
             sqlx::query(
