@@ -207,3 +207,31 @@ async fn follow_up_route_returns_404_for_missing_conversation(db: PgPool) {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[sqlx::test]
+async fn app_serves_chat_page_and_javascript(db: PgPool) {
+    let app = test_app(db).await;
+    let page = app
+        .clone()
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page_body = to_bytes(page.into_body(), 1024 * 1024).await.unwrap();
+    assert!(String::from_utf8_lossy(&page_body).contains("Turn Store Agent"));
+
+    let script = app
+        .oneshot(
+            Request::builder()
+                .uri("/app.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(script.status(), StatusCode::OK);
+    assert_eq!(
+        script.headers()[CONTENT_TYPE],
+        "text/javascript; charset=utf-8"
+    );
+}

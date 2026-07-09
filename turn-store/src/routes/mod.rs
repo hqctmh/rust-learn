@@ -1,6 +1,7 @@
 pub mod conversation;
 pub mod stream;
 pub mod turn;
+pub mod web;
 
 use axum::{Json, Router, routing::get};
 use serde_json::{Value, json};
@@ -12,6 +13,7 @@ pub fn router() -> Router<AppState> {
         .route("/health", get(health))
         .merge(conversation::router())
         .merge(turn::router())
+        .merge(web::router())
 }
 
 async fn health() -> Json<Value> {
