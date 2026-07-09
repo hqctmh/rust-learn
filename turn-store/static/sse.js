@@ -1,5 +1,29 @@
+export function parseAgentEventData(event, data) {
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch {
+    throw new Error(`${event} 事件 data 不是有效 JSON`);
+  }
+
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error(`${event} 事件 data 必须是 JSON 对象`);
+  }
+
+  let requiredStringField;
+  if (event === "turn_created") requiredStringField = "conversation_id";
+  if (event === "text") requiredStringField = "content";
+  if (event === "error") requiredStringField = "message";
+  if (requiredStringField && typeof payload[requiredStringField] !== "string") {
+    throw new Error(`${event}.${requiredStringField} 必须是字符串`);
+  }
+
+  return payload;
+}
+
 export function createSseParser(onEvent) {
-  let buffer = "";
+  let lineBuffer = "";
+  let skipLfAfterCr = false;
   let eventName = "message";
   let eventId = "";
   let dataLines = [];
@@ -11,7 +35,7 @@ export function createSseParser(onEvent) {
     }
     onEvent({
       id: eventId,
-      event: eventName,
+      event: eventName || "message",
       data: dataLines.join("\n"),
     });
     eventName = "message";
@@ -42,19 +66,30 @@ export function createSseParser(onEvent) {
 
   return {
     push(chunk) {
-      buffer += chunk;
-      let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
-        consumeLine(buffer.slice(0, newline));
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf("\n");
+      for (const character of chunk) {
+        if (skipLfAfterCr) {
+          skipLfAfterCr = false;
+          if (character === "\n") continue;
+        }
+
+        if (character === "\r") {
+          consumeLine(lineBuffer);
+          lineBuffer = "";
+          skipLfAfterCr = true;
+        } else if (character === "\n") {
+          consumeLine(lineBuffer);
+          lineBuffer = "";
+        } else {
+          lineBuffer += character;
+        }
       }
     },
     finish() {
-      if (buffer !== "") {
-        consumeLine(buffer);
-        buffer = "";
+      if (lineBuffer !== "") {
+        consumeLine(lineBuffer);
+        lineBuffer = "";
       }
+      skipLfAfterCr = false;
       dispatch();
     },
   };

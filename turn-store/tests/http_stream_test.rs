@@ -221,6 +221,7 @@ async fn app_serves_chat_page_and_javascript(db: PgPool) {
     assert!(String::from_utf8_lossy(&page_body).contains("Turn Store Agent"));
 
     let script = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/app.js")
@@ -232,6 +233,34 @@ async fn app_serves_chat_page_and_javascript(db: PgPool) {
     assert_eq!(script.status(), StatusCode::OK);
     assert_eq!(
         script.headers()[CONTENT_TYPE],
+        "text/javascript; charset=utf-8"
+    );
+
+    let styles = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/styles.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(styles.status(), StatusCode::OK);
+    assert_eq!(styles.headers()[CONTENT_TYPE], "text/css; charset=utf-8");
+
+    let parser_script = app
+        .oneshot(
+            Request::builder()
+                .uri("/sse.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(parser_script.status(), StatusCode::OK);
+    assert_eq!(
+        parser_script.headers()[CONTENT_TYPE],
         "text/javascript; charset=utf-8"
     );
 }

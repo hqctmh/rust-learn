@@ -1,4 +1,4 @@
-import { createSseParser } from "./sse.js";
+import { createSseParser, parseAgentEventData } from "./sse.js";
 
 const elements = {
   form: document.querySelector("#composer"),
@@ -123,12 +123,7 @@ async function send(prompt) {
     });
     let terminal = false;
     await consumeSse(response, ({ event, data }) => {
-      let payload;
-      try {
-        payload = JSON.parse(data);
-      } catch {
-        payload = data;
-      }
+      const payload = parseAgentEventData(event, data);
       logEvent(event, payload);
 
       if (event === "turn_created") {
