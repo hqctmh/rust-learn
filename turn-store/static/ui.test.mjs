@@ -60,3 +60,24 @@ test("样式覆盖 960px 和 640px 响应式断点", async () => {
   assert.match(css, /@media \(max-width: 959px\)/);
   assert.match(css, /@media \(max-width: 639px\)/);
 });
+
+test("顶栏使用不透明白色背景", async () => {
+  const css = await read("styles.css");
+  assert.match(css, /\.topbar\s*\{[^}]*background:\s*var\(--canvas\)/s);
+});
+
+test("平板布局把输入区保留在视口内", async () => {
+  const css = await read("styles.css");
+  assert.match(
+    css,
+    /@media \(max-width: 959px\)[\s\S]*?\.shell\s*\{[^}]*\n\s*height:\s*100vh;/,
+  );
+});
+
+test("空状态填满消息区但不会制造内部滚动", async () => {
+  const css = await read("styles.css");
+  assert.match(
+    css,
+    /\.empty-state\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;/s,
+  );
+});
