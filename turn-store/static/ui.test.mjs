@@ -34,3 +34,13 @@ test("页面保留现有交互元素 ID", async () => {
     assert.match(html, new RegExp(`id="${id}"`));
   }
 });
+
+test("运行事件使用结构化列表项并同步会话状态", async () => {
+  const app = await read("app.js");
+
+  assert.match(app, /createElement\("li"\)/);
+  assert.match(app, /className = "run-event"/);
+  assert.match(app, /runLog\.append\(item\)/);
+  assert.match(app, /conversationStatus\.textContent/);
+  assert.match(app, /statusDot\.classList\.toggle\("active"/);
+});

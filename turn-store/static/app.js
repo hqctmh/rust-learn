@@ -10,8 +10,11 @@ const elements = {
   messages: document.querySelector("#messages"),
   empty: document.querySelector("#empty-state"),
   conversationLabel: document.querySelector("#conversation-label"),
+  conversationStatus: document.querySelector("#conversation-status"),
+  statusDot: document.querySelector("#status-dot"),
   runPanel: document.querySelector("#run-panel"),
   runToggle: document.querySelector("#run-toggle"),
+  runToggleHint: document.querySelector(".run-toggle-hint"),
   runLog: document.querySelector("#run-log"),
 };
 
@@ -49,12 +52,44 @@ function setStreaming(active) {
   elements.speed.disabled = active;
   elements.stop.hidden = !active;
   elements.newChat.disabled = active;
+  elements.statusDot.classList.toggle("streaming", active);
+}
+
+function setConversationLabel(label, active = false) {
+  elements.conversationLabel.textContent = label;
+  elements.conversationStatus.textContent = label;
+  elements.statusDot.classList.toggle("active", active);
+}
+
+function eventDetail(event, data) {
+  if (event === "text" && typeof data?.content === "string") {
+    return data.content.length > 80 ? `${data.content.slice(0, 80)}…` : data.content;
+  }
+  if (typeof data === "string") return data;
+  return JSON.stringify(data);
 }
 
 function logEvent(event, data) {
   elements.runPanel.hidden = false;
-  const line = `[${event}] ${typeof data === "string" ? data : JSON.stringify(data)}`;
-  elements.runLog.textContent += `${line}\n`;
+
+  const item = document.createElement("li");
+  item.className = "run-event";
+
+  const time = document.createElement("time");
+  time.className = "run-event-time";
+  time.dateTime = new Date().toISOString();
+  time.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+
+  const name = document.createElement("code");
+  name.className = "run-event-name";
+  name.textContent = event;
+
+  const detail = document.createElement("p");
+  detail.className = "run-event-detail";
+  detail.textContent = eventDetail(event, data);
+
+  item.append(time, name, detail);
+  elements.runLog.append(item);
   elements.runLog.scrollTop = elements.runLog.scrollHeight;
 }
 
@@ -108,7 +143,7 @@ async function consumeSse(response, onEvent) {
 async function send(prompt) {
   const assistant = addMessage("assistant");
   assistant.bubble.classList.add("cursor");
-  elements.runLog.textContent = "";
+  elements.runLog.replaceChildren();
   elements.runPanel.hidden = true;
   const request = requestFor(prompt);
   state.controller = new AbortController();
@@ -128,7 +163,7 @@ async function send(prompt) {
 
       if (event === "turn_created") {
         state.conversationId = payload.conversation_id;
-        elements.conversationLabel.textContent = `Conversation ${state.conversationId.slice(0, 8)}`;
+        setConversationLabel(`Conversation ${state.conversationId.slice(0, 8)}`, true);
       } else if (event === "text" && typeof payload.content === "string") {
         assistant.bubble.textContent += payload.content;
         scrollToBottom();
@@ -179,11 +214,15 @@ elements.newChat.addEventListener("click", () => {
   elements.messages.replaceChildren(elements.empty);
   elements.empty.hidden = false;
   elements.runPanel.hidden = true;
-  elements.runLog.textContent = "";
-  elements.conversationLabel.textContent = "尚未创建会话";
+  elements.runLog.replaceChildren();
+  setConversationLabel("尚未创建会话");
+  elements.runPanel.classList.remove("collapsed");
+  elements.runToggle.setAttribute("aria-expanded", "true");
+  elements.runToggleHint.textContent = "收起";
   elements.prompt.focus();
 });
 elements.runToggle.addEventListener("click", () => {
-  const open = elements.runPanel.classList.toggle("open");
+  const open = elements.runPanel.classList.toggle("collapsed") === false;
   elements.runToggle.setAttribute("aria-expanded", String(open));
+  elements.runToggleHint.textContent = open ? "收起" : "展开";
 });
