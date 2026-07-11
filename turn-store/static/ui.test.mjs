@@ -44,3 +44,19 @@ test("运行事件使用结构化列表项并同步会话状态", async () => {
   assert.match(app, /conversationStatus\.textContent/);
   assert.match(app, /statusDot\.classList\.toggle\("active"/);
 });
+
+test("样式使用确认的色板且不包含渐变或投影", async () => {
+  const css = await read("styles.css");
+
+  for (const color of ["#e6e6e6", "#c8e6cd", "#c5b0f4", "#f4ecd6"]) {
+    assert.match(css, new RegExp(color, "i"));
+  }
+  assert.doesNotMatch(css, /gradient\(/i);
+  assert.doesNotMatch(css, /box-shadow\s*:/i);
+});
+
+test("样式覆盖 960px 和 640px 响应式断点", async () => {
+  const css = await read("styles.css");
+  assert.match(css, /@media \(max-width: 959px\)/);
+  assert.match(css, /@media \(max-width: 639px\)/);
+});
