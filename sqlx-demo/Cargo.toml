@@ -4,19 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-
 axum = { version = "0.8", features = ["macros"] }
+sqlx = {
+  version = "0.9.0",
+  features = ["macros", "postgres", "runtime-tokio", "time", "uuid"]
+}
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "macros", "time", "uuid"] }
 
 # Important secondary crates
-argon2 = "0.6.0-rc.8" # FIXME: update to `0.6.0` when released
+argon2 = "0.6.0-rc.8"  # FIXME: update to `0.6.0` when released
 rand = "0.10.1"
 regex = "1.6.0"
 serde = "1.0.219"
 serde_with = { version = "3.18.0", features = ["time_0_3"] }
 time = "0.3.47"
-uuid = { version = "1.12.1", features = ["serde"] }
+uuid = { version = "1.12.1", features = ["serde", "v4"] }
+
 validator = { version = "0.20.0", features = ["derive"] }
 
 # Auxilliary crates

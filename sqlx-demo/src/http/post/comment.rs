@@ -4,6 +4,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use sqlx::postgres::PgRow;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
@@ -70,7 +71,7 @@ async fn create_post_comment(
 async fn get_posts_comments(
     db: State<PgPool>,
     Path(post_id): Path<Uuid>,
-) -> Result<Json<Vec<Comment>>> {
+) -> anyhow::Result<Json<Vec<Comment>>> {
     let comments = sqlx::query_as!(
         Comment,
         r#"
