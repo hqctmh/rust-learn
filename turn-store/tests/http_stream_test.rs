@@ -218,7 +218,7 @@ async fn app_serves_chat_page_and_javascript(db: PgPool) {
         .unwrap();
     assert_eq!(page.status(), StatusCode::OK);
     let page_body = to_bytes(page.into_body(), 1024 * 1024).await.unwrap();
-    assert!(String::from_utf8_lossy(&page_body).contains("Turn Store Agent"));
+    assert!(String::from_utf8_lossy(&page_body).contains("Turn Store"));
 
     let script = app
         .clone()
@@ -233,6 +233,22 @@ async fn app_serves_chat_page_and_javascript(db: PgPool) {
     assert_eq!(script.status(), StatusCode::OK);
     assert_eq!(
         script.headers()[CONTENT_TYPE],
+        "text/javascript; charset=utf-8"
+    );
+
+    let run_events_script = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/run-events.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(run_events_script.status(), StatusCode::OK);
+    assert_eq!(
+        run_events_script.headers()[CONTENT_TYPE],
         "text/javascript; charset=utf-8"
     );
 

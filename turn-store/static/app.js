@@ -1,4 +1,8 @@
 import { createSseParser, parseAgentEventData } from "./sse.js";
+import { createRunEventQueue } from "./run-events.js";
+
+const MAX_RUN_EVENTS = 200;
+const RUN_LOG_FLUSH_INTERVAL_MS = 100;
 
 const elements = {
   form: document.querySelector("#composer"),
@@ -12,6 +16,7 @@ const elements = {
   conversationLabel: document.querySelector("#conversation-label"),
   conversationStatus: document.querySelector("#conversation-status"),
   statusDot: document.querySelector("#status-dot"),
+  workspace: document.querySelector(".workspace"),
   runPanel: document.querySelector("#run-panel"),
   runToggle: document.querySelector("#run-toggle"),
   runToggleHint: document.querySelector(".run-toggle-hint"),
@@ -23,7 +28,10 @@ const state = {
   controller: null,
   streaming: false,
   draftDocId: crypto.randomUUID(),
+  runLogTimer: null,
 };
+
+const runEventQueue = createRunEventQueue(MAX_RUN_EVENTS);
 
 function scrollToBottom() {
   elements.messages.scrollTop = elements.messages.scrollHeight;
@@ -69,28 +77,69 @@ function eventDetail(event, data) {
   return JSON.stringify(data);
 }
 
-function logEvent(event, data) {
-  elements.runPanel.hidden = false;
-
+function createRunEventItem({ event, detail, dateTime, timeLabel }) {
   const item = document.createElement("li");
   item.className = "run-event";
 
   const time = document.createElement("time");
   time.className = "run-event-time";
-  time.dateTime = new Date().toISOString();
-  time.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  time.dateTime = dateTime;
+  time.textContent = timeLabel;
 
   const name = document.createElement("code");
   name.className = "run-event-name";
   name.textContent = event;
 
-  const detail = document.createElement("p");
-  detail.className = "run-event-detail";
-  detail.textContent = eventDetail(event, data);
+  const detailNode = document.createElement("p");
+  detailNode.className = "run-event-detail";
+  detailNode.textContent = detail;
 
-  item.append(time, name, detail);
-  elements.runLog.append(item);
+  item.append(time, name, detailNode);
+  return item;
+}
+
+function flushRunEvents() {
+  state.runLogTimer = null;
+  if (elements.runPanel.classList.contains("collapsed")) return;
+
+  const entries = runEventQueue.drain();
+  if (entries.length === 0) return;
+
+  const fragment = document.createDocumentFragment();
+  for (const entry of entries) fragment.append(createRunEventItem(entry));
+  elements.runLog.append(fragment);
+
+  while (elements.runLog.childElementCount > MAX_RUN_EVENTS) {
+    elements.runLog.firstElementChild.remove();
+  }
   elements.runLog.scrollTop = elements.runLog.scrollHeight;
+}
+
+function scheduleRunEventFlush() {
+  if (elements.runPanel.classList.contains("collapsed") || state.runLogTimer !== null) return;
+  state.runLogTimer = setTimeout(flushRunEvents, RUN_LOG_FLUSH_INTERVAL_MS);
+}
+
+function resetRunEvents() {
+  if (state.runLogTimer !== null) clearTimeout(state.runLogTimer);
+  state.runLogTimer = null;
+  runEventQueue.clear();
+  elements.runLog.replaceChildren();
+  elements.runPanel.hidden = true;
+  elements.workspace.classList.remove("has-run-panel", "run-panel-collapsed");
+}
+
+function logEvent(event, data) {
+  const now = new Date();
+  elements.runPanel.hidden = false;
+  elements.workspace.classList.add("has-run-panel");
+  runEventQueue.push({
+    event,
+    detail: eventDetail(event, data),
+    dateTime: now.toISOString(),
+    timeLabel: now.toLocaleTimeString("zh-CN", { hour12: false }),
+  });
+  scheduleRunEventFlush();
 }
 
 function requestFor(prompt) {
@@ -143,8 +192,20 @@ async function consumeSse(response, onEvent) {
 async function send(prompt) {
   const assistant = addMessage("assistant");
   assistant.bubble.classList.add("cursor");
-  elements.runLog.replaceChildren();
-  elements.runPanel.hidden = true;
+  let pendingText = "";
+  let textFrame = null;
+  const flushText = () => {
+    textFrame = null;
+    if (pendingText.length === 0) return;
+    assistant.bubble.append(pendingText);
+    pendingText = "";
+    scrollToBottom();
+  };
+  const appendText = (content) => {
+    pendingText += content;
+    if (textFrame === null) textFrame = requestAnimationFrame(flushText);
+  };
+  resetRunEvents();
   const request = requestFor(prompt);
   state.controller = new AbortController();
   setStreaming(true);
@@ -165,8 +226,7 @@ async function send(prompt) {
         state.conversationId = payload.conversation_id;
         setConversationLabel(`Conversation ${state.conversationId.slice(0, 8)}`, true);
       } else if (event === "text" && typeof payload.content === "string") {
-        assistant.bubble.textContent += payload.content;
-        scrollToBottom();
+        appendText(payload.content);
       } else if (event === "run_completed") {
         terminal = true;
       } else if (event === "error") {
@@ -176,6 +236,8 @@ async function send(prompt) {
     });
     if (!terminal) throw new Error("SSE 在终止事件前结束");
   } catch (error) {
+    if (textFrame !== null) cancelAnimationFrame(textFrame);
+    flushText();
     if (error.name === "AbortError") {
       assistant.bubble.textContent ||= "已停止接收；服务端仍会完成本轮处理。";
     } else {
@@ -184,6 +246,8 @@ async function send(prompt) {
       logEvent("error", error.message);
     }
   } finally {
+    if (textFrame !== null) cancelAnimationFrame(textFrame);
+    flushText();
     assistant.bubble.classList.remove("cursor");
     state.controller = null;
     setStreaming(false);
@@ -213,8 +277,7 @@ elements.newChat.addEventListener("click", () => {
   state.draftDocId = crypto.randomUUID();
   elements.messages.replaceChildren(elements.empty);
   elements.empty.hidden = false;
-  elements.runPanel.hidden = true;
-  elements.runLog.replaceChildren();
+  resetRunEvents();
   setConversationLabel("尚未创建会话");
   elements.runPanel.classList.remove("collapsed");
   elements.runToggle.setAttribute("aria-expanded", "true");
@@ -223,6 +286,8 @@ elements.newChat.addEventListener("click", () => {
 });
 elements.runToggle.addEventListener("click", () => {
   const open = elements.runPanel.classList.toggle("collapsed") === false;
+  elements.workspace.classList.toggle("run-panel-collapsed", !open);
   elements.runToggle.setAttribute("aria-expanded", String(open));
   elements.runToggleHint.textContent = open ? "收起" : "展开";
+  if (open) scheduleRunEventFlush();
 });

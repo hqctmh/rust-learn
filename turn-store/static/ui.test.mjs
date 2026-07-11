@@ -40,9 +40,28 @@ test("运行事件使用结构化列表项并同步会话状态", async () => {
 
   assert.match(app, /createElement\("li"\)/);
   assert.match(app, /className = "run-event"/);
-  assert.match(app, /runLog\.append\(item\)/);
+  assert.match(app, /runLog\.append\(fragment\)/);
   assert.match(app, /conversationStatus\.textContent/);
   assert.match(app, /statusDot\.classList\.toggle\("active"/);
+});
+
+test("运行事件限频批量渲染并限制可见节点数量", async () => {
+  const app = await read("app.js");
+  const css = await read("styles.css");
+
+  assert.match(app, /const MAX_RUN_EVENTS = 200/);
+  assert.match(app, /const RUN_LOG_FLUSH_INTERVAL_MS = 100/);
+  assert.match(app, /setTimeout\(flushRunEvents, RUN_LOG_FLUSH_INTERVAL_MS\)/);
+  assert.match(app, /childElementCount > MAX_RUN_EVENTS/);
+  assert.doesNotMatch(css, /:has\(/);
+});
+
+test("流式正文按动画帧合并写入", async () => {
+  const app = await read("app.js");
+
+  assert.match(app, /pendingText \+= content/);
+  assert.match(app, /requestAnimationFrame\(flushText\)/);
+  assert.doesNotMatch(app, /bubble\.textContent \+= payload\.content/);
 });
 
 test("样式使用确认的色板且不包含渐变或投影", async () => {

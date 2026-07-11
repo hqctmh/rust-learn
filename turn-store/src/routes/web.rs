@@ -12,6 +12,7 @@ pub fn router() -> Router<AppState> {
         .route("/", get(index))
         .route("/styles.css", get(styles))
         .route("/sse.js", get(sse_script))
+        .route("/run-events.js", get(run_events_script))
         .route("/app.js", get(app_script))
 }
 
@@ -30,6 +31,13 @@ async fn sse_script() -> Response {
     asset(
         "text/javascript; charset=utf-8",
         include_str!("../../static/sse.js"),
+    )
+}
+
+async fn run_events_script() -> Response {
+    asset(
+        "text/javascript; charset=utf-8",
+        include_str!("../../static/run-events.js"),
     )
 }
 

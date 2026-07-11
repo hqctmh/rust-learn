@@ -125,11 +125,11 @@ select:focus-visible {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.workspace:has(.run-panel:not([hidden])) {
+.workspace.has-run-panel {
   grid-template-columns: minmax(0, 1fr) minmax(22.5rem, 28vw);
 }
 
-.workspace:has(.run-panel.collapsed:not([hidden])) {
+.workspace.has-run-panel.run-panel-collapsed {
   grid-template-columns: minmax(0, 1fr) 12rem;
 }
 
@@ -408,8 +408,8 @@ select:focus-visible {
   }
 
   .workspace,
-  .workspace:has(.run-panel:not([hidden])),
-  .workspace:has(.run-panel.collapsed:not([hidden])) {
+  .workspace.has-run-panel,
+  .workspace.has-run-panel.run-panel-collapsed {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) auto;
   }
