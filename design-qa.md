@@ -1,11 +1,10 @@
 # Turn Store Design QA
 
 - Source visual truth: `docs/superpowers/specs/assets/2026-07-10-turn-store-ui-option-2.png`
-- Primary implementation capture: `tmp/design-qa/turn-store-desktop-v2.png`
-- First-pass 1440×1024 capture: `tmp/design-qa/turn-store-active-v1.png`
-- Responsive captures: `tmp/design-qa/turn-store-tablet-v2.png`, `tmp/design-qa/turn-store-mobile-v1.png`, `tmp/design-qa/turn-store-mobile-active-v1.png`
-- Full-view comparison: `tmp/design-qa/turn-store-comparison-v1.png`
-- Focused comparisons: `tmp/design-qa/turn-store-topbar-comparison-v1.png`, `tmp/design-qa/turn-store-composer-comparison-v1.png`
+- Primary implementation capture: `docs/superpowers/design-qa/turn-store-desktop-active.jpg`
+- Responsive captures: `docs/superpowers/design-qa/turn-store-tablet.jpg`, `docs/superpowers/design-qa/turn-store-mobile.jpg`, `docs/superpowers/design-qa/turn-store-mobile-active.jpg`
+- Full-view comparison: `docs/superpowers/design-qa/turn-store-full-comparison.jpg`
+- Focused comparisons: `docs/superpowers/design-qa/turn-store-topbar-comparison.jpg`, `docs/superpowers/design-qa/turn-store-composer-comparison.jpg`
 - Desktop viewport/state: 1440×1024, slow streaming conversation with user message, partial Agent response, composer, and visible event inspector.
 - Responsive viewports/states: 959×900 empty state; 639×844 empty and completed conversation states.
 
