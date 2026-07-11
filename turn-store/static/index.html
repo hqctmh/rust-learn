@@ -3,53 +3,70 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Turn Store Agent</title>
+    <title>Turn Store</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <div>
+        <div class="brand">
           <p class="eyebrow">AXUM · REDIS STREAM · SSE</p>
-          <h1>Turn Store Agent</h1>
+          <h1>Turn Store</h1>
         </div>
-        <button id="new-chat" class="secondary" type="button">新对话</button>
+        <div class="conversation-status" aria-live="polite">
+          <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+          <span id="conversation-status">尚未创建会话</span>
+        </div>
+        <button id="new-chat" type="button">新对话</button>
       </header>
 
-      <section id="messages" class="messages" aria-live="polite">
-        <div id="empty-state" class="empty-state">
-          <span class="orb">✦</span>
-          <h2>开始一段流式对话</h2>
-          <p>首条消息创建 Conversation，后续消息复用同一会话。</p>
-        </div>
-      </section>
+      <div class="workspace">
+        <div class="conversation-pane">
+          <section id="messages" class="messages" aria-live="polite">
+            <div id="empty-state" class="empty-state">
+              <p class="eyebrow">STREAMING WORKSPACE</p>
+              <h2>开始一段流式对话</h2>
+              <p>首条消息创建会话，后续消息复用同一会话。</p>
+            </div>
+          </section>
 
-      <section class="composer-wrap">
-        <div id="run-panel" class="run-panel" hidden>
-          <button id="run-toggle" type="button" aria-expanded="false">运行详情</button>
-          <pre id="run-log"></pre>
+          <section class="composer-wrap">
+            <form id="composer" class="composer">
+              <label class="sr-only" for="prompt">消息</label>
+              <textarea
+                id="prompt"
+                rows="3"
+                placeholder="输入消息，Enter 发送，Shift + Enter 换行"
+                required
+              ></textarea>
+              <div class="composer-actions">
+                <label class="speed-field" for="speed">
+                  <span>输出模式</span>
+                  <select id="speed">
+                    <option value="fast">快速 · 按行</option>
+                    <option value="slow">慢速 · 5-10 字</option>
+                  </select>
+                </label>
+                <span id="conversation-label">尚未创建会话</span>
+                <button id="stop" class="secondary" type="button" hidden>停止接收</button>
+                <button id="send" type="submit">发送</button>
+              </div>
+            </form>
+          </section>
         </div>
-        <form id="composer" class="composer">
-          <textarea
-            id="prompt"
-            rows="3"
-            placeholder="输入消息，Enter 发送，Shift + Enter 换行"
-            required
-          ></textarea>
-          <div class="composer-actions">
-            <label>
-              输出模式
-              <select id="speed">
-                <option value="fast">快速 · 按行</option>
-                <option value="slow">慢速 · 5-10 字</option>
-              </select>
-            </label>
-            <span id="conversation-label">尚未创建会话</span>
-            <button id="stop" class="secondary" type="button" hidden>停止接收</button>
-            <button id="send" type="submit">发送</button>
+
+        <aside id="run-panel" class="run-panel" aria-label="运行详情" hidden>
+          <button id="run-toggle" class="run-toggle" type="button" aria-expanded="true">
+            <span>运行详情</span>
+            <span class="run-toggle-hint" aria-hidden="true">收起</span>
+          </button>
+          <div class="run-heading">
+            <p class="eyebrow">EVENT STREAM</p>
+            <h2>事件流</h2>
           </div>
-        </form>
-      </section>
+          <ol id="run-log" class="run-log" role="list"></ol>
+        </aside>
+      </div>
     </main>
     <script type="module" src="/app.js"></script>
   </body>
