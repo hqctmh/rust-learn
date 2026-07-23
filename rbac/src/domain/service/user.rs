@@ -27,7 +27,7 @@ impl UserService {
             anyhow::bail!("用户名已经存在");
         }
 
-        let password_hash = Self::hash_password(password)?;
+        let password_hash = Self::hash_password(password).await?;
 
         self.user_repository
             .create_user(username, password_hash.as_str(), display_name)
@@ -41,12 +41,20 @@ impl UserService {
             .await?
             .ok_or_else(|| anyhow!("用户名或密码错误"))?;
 
-        let stored_hash =
-            PasswordHash::new(&user.password_hash).map_err(|_| anyhow!("用户名或密码错误"))?;
+        let password = password.to_owned();
+        let password_hash = user.password_hash.clone();
+        let verify_result = tokio::task::spawn_blocking(move || {
+            let stored_hash =
+                PasswordHash::new(&password_hash).map_err(|_| anyhow!("用户名或密码错误"))?;
 
-        Argon2::default()
-            .verify_password(password.as_bytes(), &stored_hash)
-            .map_err(|_| anyhow!("用户名或密码错误"))?;
+            Argon2::default()
+                .verify_password(password.as_bytes(), &stored_hash)
+                .map_err(|_| anyhow!("用户名或密码错误"))
+        })
+        .await
+        .map_err(|e| anyhow!("密码验证任务异常:{e}"))?;
+
+        verify_result?;
 
         Ok(user)
     }
