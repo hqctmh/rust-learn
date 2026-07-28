@@ -26,3 +26,5 @@ sqlx = {
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 uuid = { version = "1.12", features = ["serde"] }
+
+dotenvy = "0.15"

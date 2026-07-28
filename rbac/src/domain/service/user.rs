@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use argon2::{
     Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
@@ -6,12 +8,12 @@ use argon2::{
 
 use crate::{domain::model::User, repository::user::UserRepository};
 
-struct UserService {
-    user_repository: UserRepository,
+pub struct UserService {
+    user_repository: Arc<UserRepository>,
 }
 
 impl UserService {
-    pub fn new(user_repository: UserRepository) -> Self {
+    pub fn new(user_repository: Arc<UserRepository>) -> Self {
         Self { user_repository }
     }
 
