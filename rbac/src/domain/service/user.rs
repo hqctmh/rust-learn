@@ -6,7 +6,13 @@ use argon2::{
     password_hash::{SaltString, rand_core::OsRng},
 };
 
-use crate::{domain::model::User, repository::user::UserRepository};
+use crate::{
+    domain::{
+        model::User,
+        param::{Page, UserPageQuery},
+    },
+    repository::user::UserRepository,
+};
 
 pub struct UserService {
     user_repository: Arc<UserRepository>,
@@ -59,6 +65,10 @@ impl UserService {
         verify_result?;
 
         Ok(user)
+    }
+
+    pub async fn user_page_list(&self, query: UserPageQuery) -> anyhow::Result<Page<User>> {
+        Ok(self.user_repository.select_by_page(&query).await?)
     }
 
     async fn hash_password(password: &str) -> anyhow::Result<String> {
