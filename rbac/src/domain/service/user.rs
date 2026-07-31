@@ -25,7 +25,7 @@ impl UserService {
         Self { user_repository }
     }
 
-    pub async fn user_regiest(
+    pub async fn user_regist(
         &self,
         username: &str,
         password: &str,

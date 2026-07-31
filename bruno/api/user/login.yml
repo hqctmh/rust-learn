@@ -1,0 +1,25 @@
+info:
+  name: 用户登录
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{baseUrl}}/user/login"
+  headers:
+    - name: content-type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "username": "test_user",
+        "password": "111111"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

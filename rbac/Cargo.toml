@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1"
 argon2 = "0.5"
 async-stream = "0.3"
-axum = "0.8"
+axum = { version = "0.8", features = ["macros"] }
 chrono = { version = "0.4", features = ["serde"] }
 password-hash = { version = "0.5", features = ["getrandom"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -28,4 +28,5 @@ tower = "0.5"
 uuid = { version = "1.12", features = ["serde"] }
 
 dotenvy = "0.15"
-jsonwebtoken = "11.0.0"
+jsonwebtoken = {version = "11.0.0",features=["rust_crypto"]}
+

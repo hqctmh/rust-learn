@@ -20,17 +20,19 @@ pub async fn user_page_list(
     Ok(Json(ApiResponse::success(page)))
 }
 
-pub async fn user_regiext(
+#[axum::debug_handler]
+pub async fn user_regist(
     State(state): State<AppState>,
     Json(body): Json<UserRegiestParam>,
 ) -> ApiResult<User> {
     let user = state
         .user_service
-        .user_regiest(&body.username, &body.password, body.display_name.as_deref())
+        .user_regist(&body.username, &body.password, body.display_name.as_deref())
         .await?;
     Ok(Json(ApiResponse::success(user)))
 }
 
+#[axum::debug_handler]
 pub async fn user_login(
     State(state): State<AppState>,
     Json(body): Json<UserLoginParam>,

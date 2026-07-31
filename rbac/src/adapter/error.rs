@@ -24,7 +24,7 @@ impl IntoResponse for AppError {
 
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "服务器内部错误".to_string(),
+                    format!("服务器内部错误：{error:?}")
                 )
             }
         };

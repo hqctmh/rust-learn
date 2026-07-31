@@ -1,5 +1,5 @@
 use axum::Json;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::adapter::error::AppError;
 
@@ -32,15 +32,15 @@ impl ApiResponse<()> {
 
 pub type ApiResult<T> = Result<Json<ApiResponse<T>>, AppError>;
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserRegiestParam {
     pub username: String,
     pub password: String,
     pub display_name: Option<String>,
 }
 
-
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserLoginParam {
     pub username: String,
     pub password: String,
 }
-

@@ -1,0 +1,34 @@
+info:
+  name: 用户分页列表
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{baseUrl}}/user/page"
+  params:
+    - name: username
+      value: ""
+      type: query
+      disabled: true
+    - name: display_name
+      value: ""
+      type: query
+      disabled: true
+    - name: is_active
+      value: "true"
+      type: query
+      disabled: true
+    - name: page
+      value: "1"
+      type: query
+    - name: page_size
+      value: "20"
+      type: query
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

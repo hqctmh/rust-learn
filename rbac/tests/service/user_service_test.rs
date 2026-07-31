@@ -10,7 +10,7 @@ async fn service_create_user() -> anyhow::Result<()> {
 
     let user = state
         .user_service
-        .user_regiest(username.as_str(), "111111", Some("test"))
+        .user_regist(username.as_str(), "111111", Some("test"))
         .await?;
 
     println!("user:{:?}", user);
