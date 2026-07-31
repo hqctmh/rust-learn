@@ -3,7 +3,6 @@ use serde::Serialize;
 
 use crate::adapter::error::AppError;
 
-
 #[derive(Debug, Serialize)]
 pub struct ApiResponse<T> {
     pub code: u16,
@@ -12,11 +11,11 @@ pub struct ApiResponse<T> {
 }
 
 impl<T> ApiResponse<T> {
-    pub fn success(data: Option<T>) -> Self {
+    pub fn success(data: T) -> Self {
         Self {
             code: 0,
             message: "success".to_string(),
-            data,
+            data: Some(data),
         }
     }
 }
@@ -32,3 +31,16 @@ impl ApiResponse<()> {
 }
 
 pub type ApiResult<T> = Result<Json<ApiResponse<T>>, AppError>;
+
+pub struct UserRegiestParam {
+    pub username: String,
+    pub password: String,
+    pub display_name: Option<String>,
+}
+
+
+pub struct UserLoginParam {
+    pub username: String,
+    pub password: String,
+}
+

@@ -1,3 +1,3 @@
 pub mod model;
-pub mod param;
+pub mod dto;
 pub mod service;

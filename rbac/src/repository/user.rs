@@ -3,8 +3,8 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::domain::{
+    dto::{Page, UserPageQuery},
     model::User,
-    param::{Page, UserPageQuery},
 };
 
 pub struct UserRepository {

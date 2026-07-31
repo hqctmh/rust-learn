@@ -4,11 +4,11 @@ use axum::{
 };
 
 use crate::{
-    adapter::model::{ApiResponse, ApiResult},
+    adapter::model::{ApiResponse, ApiResult, UserLoginParam, UserRegiestParam},
     di::AppState,
     domain::{
+        dto::{LoginResponse, Page, UserPageQuery},
         model::User,
-        param::{Page, UserPageQuery},
     },
 };
 
@@ -17,5 +17,27 @@ pub async fn user_page_list(
     Query(query): Query<UserPageQuery>,
 ) -> ApiResult<Page<User>> {
     let page = state.user_service.user_page_list(query).await?;
-    Ok(Json(ApiResponse::success(Some(page))))
+    Ok(Json(ApiResponse::success(page)))
+}
+
+pub async fn user_regiext(
+    State(state): State<AppState>,
+    Json(body): Json<UserRegiestParam>,
+) -> ApiResult<User> {
+    let user = state
+        .user_service
+        .user_regiest(&body.username, &body.password, body.display_name.as_deref())
+        .await?;
+    Ok(Json(ApiResponse::success(user)))
+}
+
+pub async fn user_login(
+    State(state): State<AppState>,
+    Json(body): Json<UserLoginParam>,
+) -> ApiResult<LoginResponse> {
+    let login_response = state
+        .user_service
+        .user_login(&body.username, &body.password, "")
+        .await?;
+    Ok(Json(ApiResponse::success(login_response)))
 }

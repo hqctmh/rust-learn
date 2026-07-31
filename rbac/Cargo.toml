@@ -28,3 +28,4 @@ tower = "0.5"
 uuid = { version = "1.12", features = ["serde"] }
 
 dotenvy = "0.15"
+jsonwebtoken = "11.0.0"

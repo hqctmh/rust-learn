@@ -8,9 +8,11 @@ use argon2::{
 
 use crate::{
     domain::{
+        dto::LoginResponse,
+        dto::{Page, UserPageQuery},
         model::User,
-        param::{Page, UserPageQuery},
     },
+    infra::claims,
     repository::user::UserRepository,
 };
 
@@ -42,7 +44,12 @@ impl UserService {
             .await
     }
 
-    pub async fn user_login(&self, username: &str, password: &str) -> anyhow::Result<User> {
+    pub async fn user_login(
+        &self,
+        username: &str,
+        password: &str,
+        secret: &str,
+    ) -> anyhow::Result<LoginResponse> {
         let user = self
             .user_repository
             .find_by_username(username)
@@ -64,7 +71,20 @@ impl UserService {
 
         verify_result?;
 
-        Ok(user)
+        let user_id = user.id.to_string();
+        let secret = secret.to_owned();
+        let claims = tokio::task::spawn_blocking(move || {
+            claims::generate_jwt(user_id.as_str(), secret.as_str())
+        })
+        .await?
+        .expect("jwt token 生成失败");
+
+        Ok(LoginResponse {
+            user,
+            access_token: claims.token_str,
+            token_type: "Bearer",
+            expires_in: claims.exp as u64,
+        })
     }
 
     pub async fn user_page_list(&self, query: UserPageQuery) -> anyhow::Result<Page<User>> {
