@@ -1,5 +1,8 @@
-use axum::{Json, http::StatusCode, response::Result};
+use axum::Json;
 use serde::Serialize;
+
+use crate::adapter::error::AppError;
+
 
 #[derive(Debug, Serialize)]
 pub struct ApiResponse<T> {
@@ -28,4 +31,4 @@ impl ApiResponse<()> {
     }
 }
 
-pub type ApiResult<T> = Result<Json<ApiResponse<T>>, (StatusCode, Json<ApiResponse<()>>)>;
+pub type ApiResult<T> = Result<Json<ApiResponse<T>>, AppError>;

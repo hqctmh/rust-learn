@@ -1,5 +1,5 @@
 use axum::{Router, routing::get};
-use rbac::di::AppState;
+use rbac::{adapter::http, di::AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,5 +14,6 @@ async fn main() -> anyhow::Result<()> {
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route("/user/page",get(http::user_page_list))
         .with_state(state)
 }
