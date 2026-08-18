@@ -30,7 +30,10 @@ async fn service_user_login() -> anyhow::Result<()> {
 
     let username = "test_user_1785230715";
 
-    let user = state.user_service.user_login(username, "111111").await?;
+    let user = state
+        .user_service
+        .user_login(username, "111111", "123")
+        .await?;
     println!("user:{:?}", user);
 
     Ok(())

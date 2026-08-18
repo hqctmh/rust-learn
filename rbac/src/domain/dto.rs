@@ -19,7 +19,7 @@ pub struct Page<T> {
     pub page_size: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug,Serialize)]
 pub struct LoginResponse {
     pub user: User,
     pub access_token: String,
